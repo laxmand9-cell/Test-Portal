@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Test Portal</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="bar" id="bar" hidden>
+    <a class="brand" href="#/"><span class="dot" aria-hidden="true"></span><span id="brand-name">Test Portal</span></a>
+    <nav id="nav" aria-label="Main"></nav>
+    <div class="who"><span id="who"></span><button class="link" id="logout" type="button">Log out</button></div>
+  </header>
+  <main id="view" class="view"></main>
+</div>
+<div id="toast" role="status" hidden></div>
+<div id="modal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true"><div id="modal-body"></div></div></div>
+
+<script src="/vendor/jsQR.js"></script>
+<script src="/vendor/qrcode.js"></script>
+<script src="/vendor/jspdf.umd.min.js"></script>
+<script src="/vendor/jszip.min.js"></script>
+<script src="/vendor/pdf.min.js"></script>
+<script src="/vendor/pdf.worker.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
+<script src="/vendor/omr_core.js"></script>
+<script src="/vendor/sheet_render.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "test-portal",
+  "version": "1.0.0",
+  "description": "Multi-campus test portal with OMR evaluation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.2",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

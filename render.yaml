@@ -1,18 +1,22 @@
 # Render Blueprint: in Render choose New > Blueprint and pick this repository.
-# Starter plan ($7/month) + a free Neon PostgreSQL database (DATABASE_URL), so data is kept.
+# Starter plan ($7/month) + a 1 GB disk ($0.25/month) holding the built-in database file.
 services:
   - type: web
     name: test-portal
     runtime: node
-    plan: starter            # $7/month: no sleeping. Data lives in Neon (DATABASE_URL)
-    region: singapore        # pick Neon's Singapore region too, so they are close
+    plan: starter            # disks need a paid plan
+    region: singapore        # closest Render region to India
     branch: main
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
-      - key: DATABASE_URL      # the connection string from Neon (postgresql://...)
-        sync: false
+      - key: DATA_DIR          # the database file is kept on the disk
+        value: /var/data
       - key: ADMIN_USER        # first central-team login
         sync: false
       - key: ADMIN_PASSWORD

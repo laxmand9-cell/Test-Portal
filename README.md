@@ -51,12 +51,14 @@ Settings (environment variables):
 
 If neither can keep data (for example Render's free plan with no database), the portal still starts, but it shows the central team a red warning.
 
-## Putting it online (free: Render + Neon)
+## Putting it online (Render)
 
-1. **Neon** (neon.com): create a project in the **AWS Asia Pacific (Singapore)** region. Click **Connect** and copy the connection string (it starts with `postgresql://`).
-2. **Render** (render.com): choose **New > Blueprint** and pick this repository. When asked, paste the Neon string into `DATABASE_URL`, and type `ADMIN_USER` and `ADMIN_PASSWORD`. Then click **Apply**.
+`render.yaml` sets everything up: the Starter plan ($7/month) and a 1 GB disk at `/var/data` holding the database file ($0.25/month).
 
-The free Render site sleeps after 15 minutes without visitors, and the first visit after that takes about a minute. Upgrade the Render plan to Starter ($7/month) to stop that; the data stays in Neon. Neon's free plan holds 1 GB.
+1. On render.com choose **New > Blueprint** and pick this repository.
+2. Type `ADMIN_USER` and `ADMIN_PASSWORD` when asked, then click **Apply**.
+
+To use PostgreSQL instead (Render Postgres or Neon), remove the disk and `DATA_DIR`, and set `DATABASE_URL`.
 
 Every push to the `main` branch updates the live site automatically.
 

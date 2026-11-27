@@ -4,7 +4,7 @@
   // Heavy tools (scanning, PDF, Excel) load only on the admin screens that use them, so student phones download little.
   const LIBS = { jsqr: "/vendor/jsQR.js", qrcode: "/vendor/qrcode.js", jspdf: "/vendor/jspdf.umd.min.js", jszip: "/vendor/jszip.min.js",
     pdf: "/vendor/pdf.min.js", pdfworker: "/vendor/pdf.worker.min.js", xlsx: "/vendor/xlsx.full.min.js",
-    katex: "/vendor/katex/katex.min.js", katexauto: "/vendor/katex/auto-render.min.js" };
+    katex: "/vendor/katex/katex.min.js", katexauto: "/vendor/katex/auto-render.min.js", exam: "/exam.js" };
   const libLoads = {};
   const loadLib = k => (libLoads[k] = libLoads[k] || new Promise((res, rej) => {
     const s = document.createElement("script"); s.src = LIBS[k];
@@ -59,6 +59,7 @@
   };
   const show = (el, ...kids) => el.replaceChildren(...kids.flat().filter(k => k != null && k !== false));
   const toast = msg => { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3500); };
+  window.TPX = { h, show: (...a) => show(...a), toast: m => toast(m), GET: u => GET(u), POST: (u, b) => POST(u, b), PUT: (u, b) => PUT(u, b), richNode: x => richNode(x) };
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" });
     let data = null; try { data = await r.json(); } catch (e) { /* empty */ }
@@ -650,21 +651,32 @@
     const date = h("input", { id: "t-date", type: "date", value: t.test_date });
     const sheet = h("select", { id: "t-sheet" }, SHEETS.map(([k, v]) => h("option", { value: k, selected: t.sheet === k }, v)));
     const chosen = new Set(t.batch_ids);
+    const DEF_MIN = { JM: 180, RJM: 180, JA: 180, NEET: 200, R180: 180, JMP: 60, JAP: 60, NEETP: 60, DR30: 30 };
+    const mode = h("select", { id: "t-mode" }, [["omr", "On OMR sheets (paper)"], ["cbt", "Online (computer-based, NTA style)"], ["both", "Both: online and on OMR sheets"]].map(([v, l]) => h("option", { value: v, selected: (t.mode || "omr") === v }, l)));
+    const dur = h("input", { id: "t-duration", type: "number", min: 5, max: 600, value: t.duration || DEF_MIN[t.sheet] || 180, style: "max-width:140px" });
+    const localDT = ms => { if (!ms) return ""; const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); };
+    const opens = h("input", { id: "t-opens", type: "datetime-local", value: localDT(t.opens_at) }), closes = h("input", { id: "t-closes", type: "datetime-local", value: localDT(t.closes_at) });
+    const cbtBox = h("div", { class: "row" }, field("Duration (minutes)", dur), field("Opens at", opens, "Optional. Students can start from this time."), field("Closes at", closes, "Optional. No one can start after this, and time ends here."));
+    const syncMode = () => (cbtBox.hidden = mode.value === "omr");
     const levelFilter = h("select", { id: "t-level", "aria-label": "Select by class" }, h("option", { value: "" }, "Tick all of a class…"), ["11", "12", "Dropper"].map(l => h("option", { value: l }, `All ${LEVEL[l]} batches`)));
     const checks = h("div", { class: "checks" });
     const drawChecks = () => checks.replaceChildren(...state.s.batches.map(bt => h("label", {}, h("input", { type: "checkbox", checked: chosen.has(bt.id), onchange: e => { e.target.checked ? chosen.add(bt.id) : chosen.delete(bt.id); } }),
       `${bt.name} · ${LEVEL[bt.level]} · ${campusName(bt.campus_id)}`)));
     levelFilter.onchange = () => { state.s.batches.filter(bt => bt.level === levelFilter.value).forEach(bt => chosen.add(bt.id)); levelFilter.value = ""; drawChecks(); };
     drawChecks();
+    sheet.addEventListener("change", () => { if (!t.duration) dur.value = DEF_MIN[sheet.value] || 180; });
+    mode.onchange = syncMode; syncMode();
     const err = h("p", { class: "err small" });
     show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: isNew ? "#/tests" : `#/tests/${id}` }, "‹ Back"), h("h1", {}, isNew ? "New test" : "Edit test"))),
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
-        const body = { code: code.value, name: name.value, test_date: date.value, sheet: sheet.value, batch_ids: [...chosen] };
+        const body = { code: code.value, name: name.value, test_date: date.value, sheet: sheet.value, batch_ids: [...chosen],
+          mode: mode.value, duration: +dur.value, opens_at: opens.value ? new Date(opens.value).getTime() : null, closes_at: closes.value ? new Date(closes.value).getTime() : null };
         try { const r = isNew ? await POST("/api/tests", body) : await PUT(`/api/tests/${id}`, body); location.hash = isNew ? `#/tests/${r.id}/questions` : `#/tests/${id}`; }
         catch (x) { err.textContent = x.message; }
       } }, h("div", { class: "row" }, field("Test code", code, "Short, printed in the QR of every sheet"), field("Test name", name), field("Date", date)),
-        field("OMR sheet type", sheet, "Sets the question pattern and marking scheme."),
+        field("Paper pattern", sheet, "Sets the sections, question types and marking scheme (also the OMR sheet design)."),
+        field("How students write it", mode), cbtBox,
         h("div", { class: "row" }, h("h3", { class: "shrink" }, "Batches writing this test"), levelFilter), checks, err,
         h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, isNew ? "Create test" : "Save"),
           !isNew ? h("button", { class: "btn danger", type: "button", onclick: () => confirmBox("Delete this test and all its results?", "Delete", async () => { await DEL(`/api/tests/${id}`); location.hash = "#/tests"; }) }, "Delete test") : null)));
@@ -680,15 +692,31 @@
     show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
         h("p", { class: "sub" }, `${t.code} · ${fmtDate(t.test_date)} · ${t.sheet_title} · ${t.questions} questions · ${t.batch_ids.length} batch${t.batch_ids.length === 1 ? "" : "es"}`)),
-        h("div", { class: "row" }, h("span", { class: "pill " + (t.published ? "ok" : "warn") }, t.published ? "Published to students" : "Not published yet"),
+        h("div", { class: "row" }, t.mode && t.mode !== "omr" ? h("span", { class: "pill navy" }, t.mode === "cbt" ? `Online · ${t.duration} min` : `Online + OMR · ${t.duration} min`) : null,
+          h("span", { class: "pill " + (t.published ? "ok" : "warn") }, t.published ? "Published to students" : "Not published yet"),
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
       h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
     if (tab === "questions" && central) return questionsTab(body, t, layout);
     if (tab === "sheets") return sheetsTab(body, t, layout);
     if (tab === "scans") return scansTab(body, t, layout);
+    if (t.mode && t.mode !== "omr") body.append(await attemptsCard(t));
     return resultsTab(body, t, layout);
   }, ["central", "zone", "campus"]);
+  async function attemptsCard(t) {
+    const list = await GET(`/api/tests/${t.id}/attempts`);
+    const when = ms => (ms ? new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
+    const win = [t.opens_at ? `opens ${when(t.opens_at)}` : "open now", t.closes_at ? `closes ${when(t.closes_at)}` : "no closing time"].join(" · ");
+    const done = list.filter(a => a.submitted_at).length;
+    const box = h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Online test"),
+      h("p", { class: "small muted", style: "margin:0" }, `${t.duration} minutes · ${win} · ${list.length} started · ${done} submitted. Submitted answers are marked with the answer key like OMR sheets.`))));
+    if (list.length) box.append(h("details", {}, h("summary", {}, "Students who started"), h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Roll", "Name", "Started", "Status", ""].map(x => h("th", {}, x)))),
+      h("tbody", {}, list.map(a => h("tr", {}, h("td", { class: "mono" }, a.roll), h("td", {}, a.name), h("td", {}, when(a.started_at)),
+        h("td", {}, a.submitted_at ? h("span", { class: "pill ok" }, "Submitted") : Date.now() < a.ends_at ? h("span", { class: "pill warn" }, "Writing now") : h("span", { class: "pill" }, "Time over")),
+        h("td", {}, h("button", { class: "link small", type: "button", onclick: () => confirmBox(`Let ${a.name || a.roll} take the test again? Their online answers for this test will be deleted.`, "Allow retake", async () => {
+          try { await DEL(`/api/tests/${t.id}/attempts/${a.student_id}`); toast("They can start again"); render(); } catch (x) { toast(x.message); } }) }, "Allow retake")))))))));
+    return box;
+  }
 
   // ---- answer key
   async function keyTab(body, t, layout) {
@@ -744,7 +772,8 @@
       const n = Object.keys(links).length;
       show(summary, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Questions for this test"),
         h("p", { class: "small muted", style: "margin:0" }, "Pick questions for each section from the question bank. Their answers go into the answer key automatically, and students see each question with its solution in their results.")),
-        h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`)));
+        h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`)),
+        t.mode && t.mode !== "omr" && n < idx.length ? h("p", { class: "err small", style: "margin:0" }, "This is an online test: students can start it only after every question number has a question.") : null);
       show(wrap, secs.map(s => sectionCard(s)));
     }
     function sectionCard(s) {
@@ -1175,6 +1204,7 @@
     const me = state.me;
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hi ${me.name || me.username}`), h("p", { class: "sub" }, `Roll ${me.roll} · ${me.batch ? me.batch.name : ""} · ${me.campus || ""}`))),
       installHint(),
+      await onlineTestsCard(),
       tests.length ? progressView(tests) : null,
       h("div", { class: "card" }, h("h2", {}, "My results"), tests.length ? h("div", { class: "results-list" }, tests.map(t => {
         const pct = t.max ? Math.round(t.total / t.max * 100) : 0;
@@ -1183,6 +1213,32 @@
           h("div", { class: "rr-score" }, h("b", {}, `${t.total}`), h("span", { class: "small muted" }, `/ ${t.max} · ${pct}%`)),
           h("span", { class: "rr-go", "aria-hidden": "true" }, "›"));
       })) : h("p", { class: "empty" }, "No results yet. Your marks appear here once your institute publishes them.")));
+  }, ["student"]);
+
+  async function onlineTestsCard() {
+    let r; try { r = await GET("/api/my/cbt"); } catch (e) { return null; }
+    if (!r.tests.length) return null;
+    const off = Date.now() - r.now;
+    const when = ms => new Date(ms + off).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    const rows = r.tests.filter(t => t.status !== "submitted" || !t.published).map(t => {
+      const act = t.status === "open" ? h("a", { class: "btn gold small", href: `#/exam/${t.id}` }, "Start")
+        : t.status === "in_progress" ? h("a", { class: "btn small", href: `#/exam/${t.id}` }, "Resume")
+        : t.status === "submitted" ? h("span", { class: "pill ok" }, "Submitted")
+        : t.status === "not_open" ? h("span", { class: "pill" }, `Opens ${when(t.opens_at)}`) : h("span", { class: "pill" }, "Closed");
+      return h("div", { class: "result-row", style: "grid-template-columns:minmax(0,1fr) auto" },
+        h("div", { class: "rr-main" }, h("b", {}, t.name), h("span", { class: "small muted" }, `${t.questions} questions · ${t.duration} minutes${t.closes_at && t.status === "open" ? ` · closes ${when(t.closes_at)}` : ""}`)), act);
+    });
+    return rows.length ? h("div", { class: "card" }, h("h2", {}, "Online tests"), h("div", { class: "results-list" }, rows)) : null;
+  }
+
+  route(/^\/exam\/(\d+)$/, async (view, id) => {
+    await need("exam");
+    const r = await GET("/api/my/cbt");
+    const t = r.tests.find(x => x.id === +id);
+    if (!t) throw new Error("This online test is not available to you.");
+    if (t.status === "in_progress") return window.TPExam.exam(view, id);
+    if (t.status !== "open") throw new Error(t.status === "submitted" ? "You have already submitted this test." : t.status === "not_open" ? "This test has not opened yet." : "This test is closed.");
+    window.TPExam.instructions(view, t, () => window.TPExam.exam(view, id));
   }, ["student"]);
 
   // progress across tests: score trend, change from last test, subject strengths

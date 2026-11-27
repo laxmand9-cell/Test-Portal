@@ -54,7 +54,7 @@ app.use("/qimg", express.static(path.join(__dirname, "public", "qimg"), { maxAge
 app.use(express.static(path.join(__dirname, "public"), {
   index: "index.html", maxAge: "1h",
   // the app-update file must always be checked fresh, so phones pick up new versions
-  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest|[\\/]app\.js|style\.css)$/.test(file)) res.set("Cache-Control", "no-cache"); },
+  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest|[\\/]app\.js|[\\/]exam\.js|style\.css)$/.test(file)) res.set("Cache-Control", "no-cache"); },
 }));
 
 function cookies(req) {
@@ -474,8 +474,18 @@ async function saveTest(req, id) {
     return { id };
   });
 }
-app.post("/api/tests", auth, central, wrap(req => saveTest(req, null)));
-app.put("/api/tests/:id", auth, central, wrap(req => saveTest(req, Number(req.params.id))));
+// online (CBT) settings: mode omr | cbt | both, duration in minutes, window as epoch ms
+const DEFAULT_MIN = { JM: 180, RJM: 180, JA: 180, NEET: 200, R180: 180, JMP: 60, JAP: 60, NEETP: 60, DR30: 30 };
+async function saveCbt(id, b, sheet) {
+  const mode = ["omr", "cbt", "both"].includes(b.mode) ? b.mode : "omr";
+  const duration = Math.min(600, Math.max(5, Math.round(Number(b.duration) || DEFAULT_MIN[sheet] || 180)));
+  const ms = v => (Number(v) > 0 ? Math.round(Number(v)) : null);
+  const opens = ms(b.opens_at), closes = ms(b.closes_at);
+  if (mode !== "omr" && opens && closes && closes <= opens) bad("The online test must close after it opens.");
+  await run("UPDATE tests SET mode=?, duration=?, opens_at=?, closes_at=? WHERE id=?", mode, duration, opens, closes, id);
+}
+app.post("/api/tests", auth, central, wrap(async req => { const r = await saveTest(req, null); await saveCbt(r.id, req.body || {}, req.body.sheet); return r; }));
+app.put("/api/tests/:id", auth, central, wrap(async req => { const r = await saveTest(req, Number(req.params.id)); await saveCbt(Number(req.params.id), req.body || {}, req.body.sheet); return r; }));
 app.delete("/api/tests/:id", auth, central, wrap(async req => { await run("DELETE FROM tests WHERE id=?", req.params.id); return { ok: true }; }));
 app.get("/api/tests/:id", auth, admin, wrap(async req => {
   const t = await testRow(await visibleTest(req.user, req.params.id));
@@ -634,6 +644,145 @@ async function studentReport(t, studentId) {
     rank_batch: s.rank_batch, rank_batch_of: s.rank_batch_of,
     detail: s.detail.map(d => ({ ...d, question: linked[d.q] || null })) };
 }
+
+// ------------------------------------------------------------------ online test (CBT), NTA style
+const GRACE_MS = 90 * 1000; // network delay allowance after the clock reaches zero
+async function cbtTestsFor(user) {
+  return qa(`SELECT t.* FROM tests t JOIN test_batches tb ON tb.test_id=t.id WHERE tb.batch_id=? AND t.mode IN ('cbt','both') ORDER BY t.test_date DESC, t.id DESC`, user.batch_id || 0);
+}
+// a CBT answer state -> the same answers object an OMR sheet gives ({qno: "B"}), so marking and analysis are shared
+function answersFromState(state, layout) {
+  const idx = OMR.questionIndex(layout), out = {};
+  for (const { qno, sec } of idx) {
+    const a = state && state.ans && state.ans[qno];
+    if (a == null || a === "") continue;
+    let v = String(a).toUpperCase().replace(/\s/g, "").slice(0, 12);
+    if (sec.qtype === "single" || sec.qtype === "multi") {
+      v = [...new Set(v.replace(/[^A-D]/g, ""))].sort().join("");
+      if (!v) continue;
+      if (sec.qtype === "single") v = v[0];
+      if (sec.options === "1234") v = [...v].map(c => "ABCD".indexOf(c) + 1).join("");
+    } else if (!/^-?\d*\.?\d+$/.test(v)) continue;
+    out[qno] = v;
+  }
+  return out;
+}
+async function finishAttempt(att, t, state) {
+  const layout = layoutOf(t);
+  const st = state || JSON.parse(att.state || "{}");
+  await tx(async () => {
+    await run("UPDATE attempts SET state=?, submitted_at=? WHERE id=? AND submitted_at IS NULL", JSON.stringify(st), Date.now(), att.id);
+    await run(`INSERT INTO results (test_id, student_id, answers, source, uploaded_by) VALUES (?,?,?,?,?)
+         ON CONFLICT(test_id, student_id) DO UPDATE SET answers=excluded.answers, source=excluded.source, uploaded_by=excluded.uploaded_by, uploaded_at=datetime('now')`,
+      t.id, att.student_id, JSON.stringify(answersFromState(st, layout)), "Online test", att.student_id);
+  });
+}
+// tests whose time ran out without a submit are submitted with the last saved answers
+async function finishExpired() {
+  const due = await qa("SELECT a.*, t.sheet, t.code FROM attempts a JOIN tests t ON t.id=a.test_id WHERE a.submitted_at IS NULL AND a.ends_at < ?", Date.now() - GRACE_MS);
+  for (const a of due) { try { await finishAttempt(a, { id: a.test_id, sheet: a.sheet }); } catch (e) { console.warn("Could not finish attempt", a.id, e.message); } }
+}
+setInterval(() => { if (db) finishExpired().catch(() => {}); }, 60 * 1000);
+
+function cbtStatus(t, att, now = Date.now()) {
+  if (att && att.submitted_at) return "submitted";
+  if (att && now < att.ends_at + GRACE_MS) return "in_progress";
+  if (att) return "submitted";
+  if (t.opens_at && now < t.opens_at) return "not_open";
+  if (t.closes_at && now >= t.closes_at) return "closed";
+  return "open";
+}
+app.get("/api/my/cbt", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  await finishExpired();
+  const out = [];
+  for (const t of await cbtTestsFor(req.user)) {
+    const att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+    const layout = OMR.getLayout(t.sheet);
+    out.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, duration: t.duration || DEFAULT_MIN[t.sheet] || 180, opens_at: t.opens_at, closes_at: t.closes_at,
+      questions: layout ? OMR.totalQ(layout) : 0, status: cbtStatus(t, att), published: !!t.published });
+  }
+  return { now: Date.now(), tests: out };
+}));
+async function myCbtTest(req) {
+  if (req.user.role !== "student") forbid();
+  const t = (await cbtTestsFor(req.user)).find(x => x.id === Number(req.params.id));
+  if (!t) throw new HttpError(404, "This online test is not available to you.");
+  return t;
+}
+// paper for the exam screen: questions without answers or solutions
+async function cbtPaper(t) {
+  const layout = layoutOf(t);
+  const qs = await qa(`SELECT tq.qno, q.text, q.image, q.options, q.fmt, q.qtype FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=? ORDER BY tq.qno`, t.id);
+  const byNo = Object.fromEntries(qs.map(q => [q.qno, { text: q.text, image: q.image, options: JSON.parse(q.options || "[]"), fmt: q.fmt }]));
+  return {
+    sections: layout.sections.map(s => ({ name: s.name, subject: s.subject, qtype: s.qtype, count: s.count, options: s.options, marks: s.marks })),
+    questions: OMR.questionIndex(layout).map(({ qno, si }) => ({ qno, si, ...(byNo[qno] || { missing: true }) })),
+  };
+}
+app.post("/api/my/cbt/:id/start", auth, wrap(async req => {
+  const t = await myCbtTest(req);
+  let att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+  const now = Date.now(), status = cbtStatus(t, att, now);
+  if (status === "submitted") bad("You have already submitted this test.");
+  if (status === "not_open") bad("This test has not opened yet.");
+  if (status === "closed") bad("This test is closed.");
+  const paper = await cbtPaper(t);
+  if (paper.questions.some(q => q.missing)) bad("This test is not ready yet. Please tell your teacher.");
+  if (!att) {
+    let ends = now + (t.duration || DEFAULT_MIN[t.sheet] || 180) * 60000;
+    if (t.closes_at) ends = Math.min(ends, t.closes_at);
+    try { await run("INSERT INTO attempts (test_id, student_id, started_at, ends_at, state, saved_at) VALUES (?,?,?,?,?,?)", t.id, req.user.id, now, ends, "{}", now); }
+    catch (e) { if (!/UNIQUE/.test(e.message)) throw e; }
+    att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+  }
+  return { test: { id: t.id, code: t.code, name: t.name, sheet_title: layoutOf(t).title }, now, ends_at: att.ends_at, state: JSON.parse(att.state || "{}"), ...paper,
+    candidate: { name: req.user.name || req.user.username, roll: req.user.roll } };
+}));
+const cleanState = s => {
+  const o = { ans: {}, mark: {}, seen: {}, time: {}, cur: 0 };
+  if (!s || typeof s !== "object") return o;
+  for (const k of ["ans", "mark", "seen", "time"]) for (const [q, v] of Object.entries(s[k] || {})) {
+    const n = Number(q); if (!(n >= 1 && n <= 400)) continue;
+    o[k][n] = k === "ans" ? str(v, 16) : k === "time" ? Math.max(0, Math.min(36000, Number(v) || 0)) : !!v;
+  }
+  o.cur = Math.max(0, Math.min(400, Number(s.cur) || 0));
+  return o;
+};
+app.put("/api/my/cbt/:id/save", auth, wrap(async req => {
+  const t = await myCbtTest(req);
+  const att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+  if (!att) bad("Start the test first.");
+  if (att.submitted_at) return { submitted: true };
+  if (Date.now() > att.ends_at + GRACE_MS) { await finishAttempt(att, t); return { submitted: true }; }
+  await run("UPDATE attempts SET state=?, saved_at=? WHERE id=?", JSON.stringify(cleanState(req.body.state)), Date.now(), att.id);
+  return { ok: true, now: Date.now(), ends_at: att.ends_at };
+}));
+app.post("/api/my/cbt/:id/submit", auth, wrap(async req => {
+  const t = await myCbtTest(req);
+  const att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+  if (!att) bad("Start the test first.");
+  if (att.submitted_at) return { submitted: true };
+  // answers sent after time ran out (beyond the grace) are ignored; the last saved ones count
+  const late = Date.now() > att.ends_at + GRACE_MS;
+  await finishAttempt(att, t, late ? null : cleanState(req.body.state));
+  return { submitted: true };
+}));
+// admins: see who has started/submitted, and let a student retake after a technical problem
+app.get("/api/tests/:id/attempts", auth, admin, wrap(async req => {
+  const t = await visibleTest(req.user, req.params.id);
+  const scope = await campusScope(req.user);
+  return qa(`SELECT a.student_id, a.started_at, a.ends_at, a.submitted_at, u.roll, u.name FROM attempts a JOIN users u ON u.id=a.student_id
+             WHERE a.test_id=? AND ${inList("u.campus_id", scope)} ORDER BY u.roll`, t.id);
+}));
+app.delete("/api/tests/:id/attempts/:sid", auth, admin, wrap(async req => {
+  const t = await visibleTest(req.user, req.params.id);
+  const u = await q1("SELECT campus_id FROM users WHERE id=?", req.params.sid);
+  if (!u || !inScope(await campusScope(req.user), u.campus_id)) forbid();
+  await tx(async () => { await run("DELETE FROM attempts WHERE test_id=? AND student_id=?", t.id, req.params.sid);
+    await run("DELETE FROM results WHERE test_id=? AND student_id=? AND source='Online test'", t.id, req.params.sid); });
+  return { ok: true };
+}));
 
 // ------------------------------------------------------------------ student side
 app.get("/api/my/tests", auth, wrap(async req => {

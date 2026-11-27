@@ -54,7 +54,7 @@ app.use("/qimg", express.static(path.join(__dirname, "public", "qimg"), { maxAge
 app.use(express.static(path.join(__dirname, "public"), {
   index: "index.html", maxAge: "1h",
   // the app-update file must always be checked fresh, so phones pick up new versions
-  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest)$/.test(file)) res.set("Cache-Control", "no-cache"); },
+  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest|[\\/]app\.js|style\.css)$/.test(file)) res.set("Cache-Control", "no-cache"); },
 }));
 
 function cookies(req) {

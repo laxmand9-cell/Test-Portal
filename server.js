@@ -604,6 +604,19 @@ app.get("/api/my/tests/:id", auth, wrap(req => {
 
 // ------------------------------------------------------------------ dashboard counts
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+// Central team: download a complete, consistent copy of the database (one .db file)
+app.get("/api/backup", auth, central, (req, res) => {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 13);
+  const tmp = path.join(DATA_DIR, `backup-${crypto.randomBytes(6).toString("hex")}.db`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    res.download(tmp, `portal-backup-${stamp}.db`, () => fs.rm(tmp, { force: true }, () => {}));
+  } catch (e) {
+    fs.rm(tmp, { force: true }, () => {});
+    console.error(e);
+    res.status(500).json({ error: "Could not make the backup." });
+  }
+});
 app.get("/api/overview", auth, admin, wrap(req => {
   const scope = campusScope(req.user);
   return {

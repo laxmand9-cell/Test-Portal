@@ -901,7 +901,10 @@
       e.preventDefault();
       try { await POST("/api/me/password", { current: cur.value, next: nx.value }); msg.className = "small"; msg.textContent = "Password changed."; cur.value = nx.value = ""; }
       catch (x) { msg.className = "small err"; msg.textContent = x.message; }
-    } }, h("h2", {}, "Change password"), field("Current password", cur), field("New password", nx, "At least 6 characters"), msg, h("div", {}, h("button", { class: "btn", type: "submit" }, "Change password"))));
+    } }, h("h2", {}, "Change password"), field("Current password", cur), field("New password", nx, "At least 6 characters"), msg, h("div", {}, h("button", { class: "btn", type: "submit" }, "Change password"))),
+      state.me.role === "central" ? h("div", { class: "card", style: "max-width:460px" }, h("h2", {}, "Backup"),
+        h("p", { class: "small" }, "Downloads one file with everything: zones, students, question bank, tests and marks. Keep a copy every week, for example in Google Drive. If anything ever goes wrong, the portal can be restored from it."),
+        h("div", {}, h("a", { class: "btn", href: "/api/backup", download: "" }, "Download backup"))) : null);
   });
 
   (window.__portalReady || Promise.resolve()).then(render, e => { $("#view").textContent = "Could not start: " + e.message; });

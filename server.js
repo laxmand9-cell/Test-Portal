@@ -7,6 +7,7 @@
 */
 "use strict";
 const express = require("express");
+const compression = require("compression");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -41,13 +42,18 @@ const str = (v, max = 200) => String(v == null ? "" : v).trim().slice(0, max);
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
+app.use(compression());
 app.use(express.json({ limit: "25mb" }));
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "same-origin");
   next();
 });
-app.use(express.static(path.join(__dirname, "public"), { index: "index.html", maxAge: "1h" }));
+app.use(express.static(path.join(__dirname, "public"), {
+  index: "index.html", maxAge: "1h",
+  // the app-update file must always be checked fresh, so phones pick up new versions
+  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest)$/.test(file)) res.set("Cache-Control", "no-cache"); },
+}));
 
 function cookies(req) {
   const out = {};
@@ -558,7 +564,7 @@ app.get("/api/my/tests", auth, wrap(async req => {
   for (const t of tests) {
     const rep = await studentReport(t, req.user.id);
     out.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet: t.sheet, total: rep.total, max: rep.max,
-      rank_batch: rep.rank_batch, rank_batch_of: rep.rank_batch_of, by_subject: rep.by_subject });
+      rank_batch: rep.rank_batch, rank_batch_of: rep.rank_batch_of, by_subject: rep.by_subject, subject_max: rep.subject_max });
   }
   return out;
 }));

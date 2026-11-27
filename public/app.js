@@ -1,6 +1,16 @@
 (function () {
   "use strict";
   const O = window.OMR, SH = window.OMRSheet;
+  // Heavy tools (scanning, PDF, Excel) load only on the admin screens that use them, so student phones download little.
+  const LIBS = { jsqr: "/vendor/jsQR.js", qrcode: "/vendor/qrcode.js", jspdf: "/vendor/jspdf.umd.min.js", jszip: "/vendor/jszip.min.js",
+    pdf: "/vendor/pdf.min.js", pdfworker: "/vendor/pdf.worker.min.js", xlsx: "/vendor/xlsx.full.min.js" };
+  const libLoads = {};
+  const loadLib = k => (libLoads[k] = libLoads[k] || new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = LIBS[k];
+    s.onload = res; s.onerror = () => { delete libLoads[k]; s.remove(); rej(new Error("Could not load part of the page. Check the internet connection and try again.")); };
+    document.head.append(s);
+  }));
+  async function need(...keys) { for (const k of keys) await loadLib(k); }
   const $ = (s, root = document) => root.querySelector(s);
   const h = (tag, attrs = {}, ...kids) => {
     const e = document.createElement(tag);
@@ -15,6 +25,7 @@
     for (const c of kids.flat(Infinity)) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
     return e;
   };
+  const show = (el, ...kids) => el.replaceChildren(...kids.flat().filter(k => k != null && k !== false));
   const toast = msg => { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3500); };
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" });
@@ -73,9 +84,9 @@
       const m = hash.match(r.re);
       if (!m) continue;
       if (r.who && !r.who.includes(state.me.role)) break;
-      view.replaceChildren(h("p", { class: "muted" }, "Loading…"));
+      show(view, h("p", { class: "muted" }, "Loading…"));
       try { await r.fn(view, ...m.slice(1)); }
-      catch (e) { view.replaceChildren(h("div", { class: "card" }, h("h2", {}, "Could not open this page"), h("p", { class: "err" }, e.message))); }
+      catch (e) { show(view, h("div", { class: "card" }, h("h2", {}, "Could not open this page"), h("p", { class: "err" }, e.message))); }
       window.scrollTo(0, 0);
       return;
     }
@@ -90,6 +101,30 @@
     $("#nav").replaceChildren(...items.map(([href, t]) => h("a", { href, class: ("#" + hash === href || (href !== "#/" && ("#" + hash).startsWith(href))) ? "on" : "" }, t)));
     const place = me.role === "zone" ? ` · ${me.zone}` : me.role === "campus" ? ` · ${me.campus}` : me.role === "student" ? ` · ${me.roll}` : "";
     $("#who").textContent = `${me.name || me.username} (${ROLE[me.role]}${place})`;
+    syncInstall();
+  }
+  // ---- install as an app (Android/desktop Chrome: install prompt; iPhone: Share > Add to Home Screen)
+  let installEvt = null;
+  const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const syncInstall = () => document.querySelectorAll(".install-btn, #install").forEach(b => (b.hidden = !installEvt || standalone()));
+  addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; syncInstall(); });
+  addEventListener("appinstalled", () => { installEvt = null; syncInstall(); toast("Installed. Open Test Portal from your home screen."); });
+  async function doInstall() { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch (e) { /* closed */ } installEvt = null; syncInstall(); }
+  $("#install").addEventListener("click", doInstall);
+  function installHint() {
+    if (standalone()) return null;
+    if (installEvt) return h("div", { class: "card", style: "border-left:4px solid var(--gold)" }, h("b", {}, "Get the app"),
+      h("p", { class: "small", style: "margin:0" }, "Install Test Portal on this phone to open your results in one tap."),
+      h("div", {}, h("button", { class: "btn gold small install-btn", type: "button", onclick: doInstall }, "Install app")));
+    let hidden = false; try { hidden = localStorage.getItem("tp-ios-hint") === "off"; } catch (e) { /* storage off */ }
+    if (isIOS && !hidden) {
+      const card = h("div", { class: "card", style: "border-left:4px solid var(--gold)" }, h("b", {}, "Add to your home screen"),
+        h("p", { class: "small", style: "margin:0" }, "In Safari, tap the Share button (square with an arrow), then Add to Home Screen. Test Portal then opens like an app."),
+        h("div", {}, h("button", { class: "link small", type: "button", onclick: () => { try { localStorage.setItem("tp-ios-hint", "off"); } catch (e) { /* off */ } card.remove(); } }, "Don't show again")));
+      return card;
+    }
+    return null;
   }
   $("#logout").addEventListener("click", async () => { await POST("/api/logout"); state.me = null; state.s = null; location.hash = "#/login"; });
 
@@ -104,13 +139,14 @@
       catch (x) { err.textContent = x.message; }
     } }, h("h1", {}, "Test Portal"), h("p", { class: "sub" }, "Log in with the username and password your institute gave you."),
       field("Username", u), field("Password", p), err, h("button", { class: "btn", type: "submit" }, "Log in"));
-    view.replaceChildren(form);
+    show(view, form);
     if (window.__previewAccounts) {
       form.append(h("div", { style: "border-top:1px solid var(--line);padding-top:12px;display:grid;gap:8px" },
         h("h3", {}, "Preview accounts"), h("p", { class: "small muted", style: "margin:0" }, "This preview runs inside your browser with demo data. Pick a role to fill in its login."),
         window.__previewAccounts.map(([label, un, pw]) => h("button", { class: "btn ghost small", type: "button", style: "text-align:left;white-space:normal", onclick: () => { u.value = un; p.value = pw; } }, `${label}  ·  ${un} / ${pw}`)),
         h("button", { class: "link small", type: "button", style: "justify-self:start", onclick: () => window.__resetPreview() }, "Reset demo data")));
     }
+    const hint = installHint(); if (hint) { hint.classList.add("login"); hint.style.marginTop = "12px"; view.append(hint); }
     u.focus();
   }
 
@@ -118,7 +154,7 @@
   route(/^\/$/, async view => {
     const [o, tests] = await Promise.all([GET("/api/overview"), GET("/api/tests"), structure(true)]);
     const me = state.me;
-    view.replaceChildren(
+    show(view, 
       h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hello, ${me.name || me.username}`),
         h("p", { class: "sub" }, me.role === "central" ? "You can see every zone, campus and batch." : me.role === "zone" ? `You can see all campuses in ${me.zone} zone.` : `You can see ${me.campus} campus.`)),
         me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null),
@@ -195,7 +231,7 @@
             h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel"))));
       });
     }
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h1", {}, central ? "Zones, campuses & batches" : "Campuses & batches"),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, central ? "Zones, campuses & batches" : "Campuses & batches"),
       h("p", { class: "sub" }, "Batches are 11th, 12th or Dropper groups inside a campus. Click a batch to see its students.")),
       central ? h("button", { class: "btn gold", type: "button", onclick: () => nameBox("New zone", "", n => POST("/api/zones", { name: n })) }, "Add zone") : null), tree);
     draw();
@@ -269,7 +305,7 @@
             h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel"))));
       });
     }
-    view.replaceChildren(
+    show(view, 
       h("div", { class: "head" }, h("div", {}, h("h1", {}, "Students"), h("p", { class: "sub" }, central ? "Students log in with the username and password you set here." : "Student accounts are created by the central team.")),
         central ? h("div", { class: "row" }, h("button", { class: "btn ghost", type: "button", onclick: () => importBox(load) }, "Import from Excel"),
           h("button", { class: "btn gold", type: "button", onclick: () => studentBox(null) }, "Add student")) : null),
@@ -283,7 +319,8 @@
     modal((b, close) => {
       const out = h("div", { style: "display:grid;gap:10px" });
       const fileIn = h("input", { id: "xl-file", type: "file", accept: ".xlsx,.xls,.csv" });
-      const tmpl = h("button", { class: "link", type: "button", onclick: () => {
+      const tmpl = h("button", { class: "link", type: "button", onclick: async () => {
+        try { await need("xlsx"); } catch (x) { toast(x.message); return; }
         const ws = XLSX.utils.aoa_to_sheet([["roll", "name", "zone", "campus", "batch", "username", "password"], ["2601001", "Aarav Sharma", "Madhapur", "Madhapur Main", "JP-2", "", ""]]);
         const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Students");
         download("students_template.xlsx", new Blob([XLSX.write(wb, { type: "array", bookType: "xlsx" })], { type: "application/octet-stream" }));
@@ -291,6 +328,7 @@
       fileIn.onchange = async () => {
         out.replaceChildren(h("p", { class: "muted" }, "Reading file…"));
         try {
+          await need("xlsx");
           const wb = XLSX.read(await fileIn.files[0].arrayBuffer());
           const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
           const norm = k => String(k).toLowerCase().replace(/[^a-z]/g, "");
@@ -367,7 +405,7 @@
         sync();
       });
     }
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h1", {}, "Admins"), h("p", { class: "sub" }, "Central team, zone heads and campus heads.")),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Admins"), h("p", { class: "sub" }, "Central team, zone heads and campus heads.")),
       h("button", { class: "btn gold", type: "button", onclick: () => adminBox(null) }, "Add admin")),
       h("div", { class: "card" }, h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Username", "Level", "Sees", "Login", ""].map(t => h("th", {}, t)))),
         h("tbody", {}, list.map(a => h("tr", {}, h("td", {}, a.name), h("td", { class: "mono" }, a.username), h("td", {}, ROLE[a.role]), h("td", {}, placeOf(a)),
@@ -400,7 +438,7 @@
     }
     [subj, chap, typ, dif].forEach(s => (s.onchange = load));
     q.oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
       h("a", { class: "btn gold", href: "#/bank/new" }, "Add question")),
       h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif, q), count, list));
     load();
@@ -437,7 +475,7 @@
       ansHint.textContent = qtype.value === "single" ? "One letter, e.g. B" : qtype.value === "multi" ? "Letters, e.g. AC" : "A number, e.g. 12 or 4.25, or a range 4.2:4.3";
     };
     qtype.onchange = sync;
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))),
+    show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))),
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
         const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value };
@@ -458,7 +496,7 @@
   // ================================================================ tests
   route(/^\/tests$/, async view => {
     const tests = await GET("/api/tests");
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h1", {}, "Tests"), h("p", { class: "sub" }, "Each test has an OMR sheet type, the batches that write it, and an answer key.")),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Tests"), h("p", { class: "sub" }, "Each test has an OMR sheet type, the batches that write it, and an answer key.")),
       state.me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null), h("div", { class: "card" }, testsTable(tests)));
   }, ["central", "zone", "campus"]);
 
@@ -480,7 +518,7 @@
     levelFilter.onchange = () => { state.s.batches.filter(bt => bt.level === levelFilter.value).forEach(bt => chosen.add(bt.id)); levelFilter.value = ""; drawChecks(); };
     drawChecks();
     const err = h("p", { class: "err small" });
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("a", { href: isNew ? "#/tests" : `#/tests/${id}` }, "‹ Back"), h("h1", {}, isNew ? "New test" : "Edit test"))),
+    show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: isNew ? "#/tests" : `#/tests/${id}` }, "‹ Back"), h("h1", {}, isNew ? "New test" : "Edit test"))),
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
         const body = { code: code.value, name: name.value, test_date: date.value, sheet: sheet.value, batch_ids: [...chosen] };
@@ -500,7 +538,7 @@
     const central = state.me.role === "central";
     const tabs = [["results", "Results"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["key", "Answer key"]] : [])];
     const body = h("div", { style: "display:grid;gap:16px" });
-    view.replaceChildren(
+    show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
         h("p", { class: "sub" }, `${t.code} · ${fmtDate(t.test_date)} · ${t.sheet_title} · ${t.questions} questions · ${t.batch_ids.length} batch${t.batch_ids.length === 1 ? "" : "es"}`)),
         h("div", { class: "row" }, h("span", { class: "pill " + (t.published ? "ok" : "warn") }, t.published ? "Published to students" : "Not published yet"),
@@ -553,7 +591,7 @@
 
   // ---- print sheets
   async function sheetsTab(body, t, layout) {
-    const roster = await GET(`/api/tests/${t.id}/roster`);
+    const [roster] = await Promise.all([GET(`/api/tests/${t.id}/roster`), need("qrcode", "jspdf")]);
     const byBatch = {};
     roster.forEach(s => (byBatch[s.batch_id] = byBatch[s.batch_id] || []).push(s));
     const rows = Object.entries(byBatch).map(([bid, list]) => h("tr", {},
@@ -584,7 +622,7 @@
 
   // ---- upload scans (reads in the browser, then saves answers to the server)
   async function scansTab(body, t, layout) {
-    const roster = await GET(`/api/tests/${t.id}/roster`);
+    const [roster] = await Promise.all([GET(`/api/tests/${t.id}/roster`), need("jsqr", "jszip", "pdf", "pdfworker")]);
     const rosterRoll = new Map(roster.map(s => [s.roll.replace(/^0+/, ""), s]));
     const st = { pages: [], rows: [], failed: [], reading: false, sel: null, filter: "all" };
     const fileIn = h("input", { id: "scan-files", type: "file", multiple: true, accept: ".zip,.pdf,image/*" });
@@ -757,7 +795,7 @@
       };
       drawIssues();
       const next = st.rows.find(x => x !== r && x.status === "REVIEW");
-      review.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h2", {}, `Roll ${r.roll}`), h("p", { class: "sub small" }, `${s ? s.name : "Unknown student"} · ${r.source}`)),
+      reshow(view, h("div", { class: "head" }, h("div", {}, h("h2", {}, `Roll ${r.roll}`), h("p", { class: "sub small" }, `${s ? s.name : "Unknown student"} · ${r.source}`)),
         h("button", { class: "btn small ghost", type: "button", onclick: () => { review.hidden = true; split.classList.remove("open"); st.sel = null; draw(); } }, "Close")),
         h("p", { class: "small muted" }, "Green: read as marked. Orange: doubtful. Red box: question to check."), cv, list,
         next ? h("div", {}, h("button", { class: "btn small", type: "button", onclick: () => openReview(next) }, "Next sheet to check ›")) : null);
@@ -861,7 +899,7 @@
         h("div", { class: "small" }, `Your answer: ${d.marked || "—"} · Correct: ${d.key}`), d.question.solution ? h("details", {}, h("summary", {}, "Solution"), h("div", { style: "white-space:pre-wrap" }, d.question.solution)) : null)));
     };
     filter.onchange = draw;
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, back, h("h1", {}, rep.test.name), h("p", { class: "sub" }, `${rep.test.code} · ${fmtDate(rep.test.test_date)} · ${rep.test.sheet_title}`))),
+    show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, rep.test.name), h("p", { class: "sub" }, `${rep.test.code} · ${fmtDate(rep.test.test_date)} · ${rep.test.sheet_title}`))),
       h("div", { class: "stats" }, h("div", { class: "stat gold" }, h("b", {}, `${rep.total} / ${rep.max}`), h("span", {}, `${pct}% of full marks`)),
         h("div", { class: "stat" }, h("b", {}, `${rep.rank_batch} / ${rep.rank_batch_of}`), h("span", {}, "Rank in batch")),
         h("div", { class: "stat" }, h("b", {}, `${rep.rank_campus} / ${rep.rank_campus_of}`), h("span", {}, "Rank in campus")),
@@ -884,12 +922,62 @@
   route(/^\/my$/, async view => {
     const tests = await GET("/api/my/tests");
     const me = state.me;
-    view.replaceChildren(h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hi ${me.name || me.username}`), h("p", { class: "sub" }, `Roll ${me.roll} · ${me.batch ? me.batch.name : ""} · ${me.campus || ""}`))),
-      h("div", { class: "card" }, h("h2", {}, "My results"), tests.length ? h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Test", "Marks", "Batch rank", ""].map(x => h("th", {}, x)))),
-        h("tbody", {}, tests.map(t => h("tr", { tabindex: 0, onclick: () => (location.hash = `#/my/${t.id}`), onkeydown: e => e.key === "Enter" && (location.hash = `#/my/${t.id}`) },
-          h("td", {}, fmtDate(t.test_date)), h("td", {}, t.name), h("td", { class: "num" }, h("b", {}, t.total), ` / ${t.max}`), h("td", { class: "num" }, `${t.rank_batch} / ${t.rank_batch_of}`), h("td", { class: "small" }, "View ›"))))))
-          : h("p", { class: "empty" }, "No results yet. Your marks appear here once your institute publishes them.")));
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hi ${me.name || me.username}`), h("p", { class: "sub" }, `Roll ${me.roll} · ${me.batch ? me.batch.name : ""} · ${me.campus || ""}`))),
+      installHint(),
+      tests.length ? progressView(tests) : null,
+      h("div", { class: "card" }, h("h2", {}, "My results"), tests.length ? h("div", { class: "results-list" }, tests.map(t => {
+        const pct = t.max ? Math.round(t.total / t.max * 100) : 0;
+        return h("a", { class: "result-row", href: `#/my/${t.id}` },
+          h("div", { class: "rr-main" }, h("b", {}, t.name), h("span", { class: "small muted" }, `${fmtDate(t.test_date)} · Rank ${t.rank_batch} of ${t.rank_batch_of} in batch`)),
+          h("div", { class: "rr-score" }, h("b", {}, `${t.total}`), h("span", { class: "small muted" }, `/ ${t.max} · ${pct}%`)),
+          h("span", { class: "rr-go", "aria-hidden": "true" }, "›"));
+      })) : h("p", { class: "empty" }, "No results yet. Your marks appear here once your institute publishes them.")));
   }, ["student"]);
+
+  // progress across tests: score trend, change from last test, subject strengths
+  function progressView(tests) {
+    const chron = tests.slice().reverse().slice(-10);
+    const pct = t => (t.max ? Math.round((t.total / t.max) * 1000) / 10 : 0);
+    const last = chron[chron.length - 1], prev = chron[chron.length - 2];
+    const delta = prev ? Math.round((pct(last) - pct(prev)) * 10) / 10 : null;
+    const W = 320, H = 150, L = 30, R = 10, T = 18, B = 26;
+    const lo = Math.min(0, ...chron.map(pct)), hi = 100;
+    const x = i => (chron.length === 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (chron.length - 1));
+    const y = v => T + ((hi - v) * (H - T - B)) / (hi - lo);
+    const svgNS = "http://www.w3.org/2000/svg";
+    const s = (tag, attrs, text) => { const e = document.createElementNS(svgNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend", role: "img", "aria-label": `Marks in your last ${chron.length} tests, as a percentage of full marks` });
+    for (const v of [0, 50, 100]) svg.append(s("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }), s("text", { x: L - 6, y: y(v) + 3, "text-anchor": "end", class: "axis" }, `${v}%`));
+    if (lo < 0) svg.append(s("line", { x1: L, x2: W - R, y1: y(lo), y2: y(lo), class: "grid" }));
+    const pts = chron.map((t, i) => `${x(i)},${y(pct(t))}`).join(" ");
+    if (chron.length > 1) svg.append(s("polygon", { points: `${x(0)},${y(lo)} ${pts} ${x(chron.length - 1)},${y(lo)}`, class: "area" }), s("polyline", { points: pts, class: "line" }));
+    chron.forEach((t, i) => {
+      const end = i === chron.length - 1;
+      svg.append(s("circle", { cx: x(i), cy: y(pct(t)), r: end ? 4.5 : 3, class: end ? "dot end" : "dot" }));
+      if (end || chron.length <= 6) svg.append(s("text", { x: x(i), y: y(pct(t)) - 8, "text-anchor": "middle", class: end ? "val end" : "val" }, `${Math.round(pct(t))}%`));
+      if (chron.length <= 6 || i % 2 === (chron.length - 1) % 2) svg.append(s("text", { x: x(i), y: H - 8, "text-anchor": "middle", class: "axis" }, t.code));
+    });
+    const subj = {};
+    for (const t of tests) for (const k in t.by_subject || {}) {
+      const m = (t.subject_max || {})[k]; if (!m) continue;
+      (subj[k] = subj[k] || []).push((t.by_subject[k] / m) * 100);
+    }
+    const rows = Object.entries(subj).map(([k, arr]) => ({ k, v: Math.round(arr.reduce((p, q) => p + q, 0) / arr.length) })).sort((p, q) => q.v - p.v);
+    const weakest = rows.length > 1 ? rows[rows.length - 1] : null;
+    const title = k => k[0] + k.slice(1).toLowerCase();
+    return h("div", { class: "card" },
+      h("div", { class: "head" }, h("h2", {}, "My progress"), h("span", { class: "small muted" }, `Last ${chron.length} test${chron.length === 1 ? "" : "s"}`)),
+      h("div", { class: "stats" },
+        h("div", { class: "stat gold" }, h("b", {}, `${Math.round(pct(last))}%`), h("span", {}, "Latest test")),
+        delta != null ? h("div", { class: "stat " + (delta >= 0 ? "ok" : "warn") }, h("b", {}, `${delta >= 0 ? "+" : ""}${delta}%`), h("span", {}, "Change from the test before")) : null,
+        h("div", { class: "stat" }, h("b", {}, `${last.rank_batch} / ${last.rank_batch_of}`), h("span", {}, "Latest batch rank"))),
+      chron.length > 1 ? svg : null,
+      rows.length ? h("div", { style: "display:grid;gap:6px" }, h("h3", {}, "Subjects, average across tests"), h("div", { class: "bars" }, rows.map(r =>
+        h("div", { class: "barrow", style: "grid-template-columns:96px minmax(0,1fr) 44px" }, h("span", {}, title(r.k)),
+          h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(100, r.v))}%` + (weakest && r.k === weakest.k ? ";background:var(--warn)" : "") })),
+          h("span", { class: "num" }, `${r.v}%`))))) : null,
+      weakest ? h("p", { class: "small", style: "margin:0" }, "Focus area: ", h("b", {}, title(weakest.k)), ". Open a test and choose \"Wrong only\" to review those questions.") : null);
+  }
   route(/^\/my\/(\d+)$/, async (view, id) => reportView(view, await GET(`/api/my/tests/${id}`), h("a", { href: "#/my" }, "‹ My results")), ["student"]);
 
   // ================================================================ account
@@ -897,7 +985,7 @@
     const cur = h("input", { id: "pw-cur", type: "password", autocomplete: "current-password" });
     const nx = h("input", { id: "pw-new", type: "password", autocomplete: "new-password" });
     const msg = h("p", { class: "small" });
-    view.replaceChildren(h("h1", {}, "Account"), h("form", { class: "card", style: "max-width:460px", onsubmit: async e => {
+    show(view, h("h1", {}, "Account"), h("form", { class: "card", style: "max-width:460px", onsubmit: async e => {
       e.preventDefault();
       try { await POST("/api/me/password", { current: cur.value, next: nx.value }); msg.className = "small"; msg.textContent = "Password changed."; cur.value = nx.value = ""; }
       catch (x) { msg.className = "small err"; msg.textContent = x.message; }

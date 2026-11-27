@@ -1,0 +1,17 @@
+{
+  "name": "Test Portal",
+  "short_name": "Test Portal",
+  "description": "Test results, ranks and analysis for students; tests and OMR marking for admins.",
+  "id": "/",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f6",
+  "theme_color": "#132a55",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

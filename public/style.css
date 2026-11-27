@@ -109,3 +109,32 @@ canvas.sheet { width: 100%; height: auto; border-radius: 4px; background: var(--
 .keygrid label span { width: 30px; text-align: right; color: var(--muted) }
 .keygrid input { padding: 5px 6px; text-transform: uppercase }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+
+/* student phone screens */
+.results-list { display: grid }
+.result-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 14px; gap: 10px; align-items: center; padding: 12px 4px; border-top: 1px solid var(--line); text-decoration: none; color: var(--fg) }
+.result-row:first-child { border-top: 0 }
+.result-row:hover { background: var(--gold-soft) }
+.rr-main, .rr-score { display: grid; gap: 1px; min-width: 0 }
+.rr-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.rr-score { text-align: right; font-variant-numeric: tabular-nums }
+.rr-score b { font-size: 18px }
+.rr-go { color: var(--muted); font-size: 20px }
+svg.trend { width: 100%; height: auto; max-height: 220px; display: block }
+svg.trend .grid { stroke: var(--line); stroke-width: 1 }
+svg.trend .axis { fill: var(--muted); font-size: 9px; font-family: var(--font) }
+svg.trend .val { fill: var(--muted); font-size: 9.5px; font-family: var(--font) }
+svg.trend .val.end { fill: var(--fg); font-weight: 700; font-size: 11px }
+svg.trend .line { fill: none; stroke: var(--navy); stroke-width: 2.2; stroke-linejoin: round }
+svg.trend .area { fill: var(--navy); opacity: .08 }
+svg.trend .dot { fill: var(--surface); stroke: var(--navy); stroke-width: 2 }
+svg.trend .dot.end { fill: var(--gold); stroke: var(--gold) }
+@media (max-width: 600px) {
+  .bar { gap: 6px 10px }
+  .bar nav { order: 3; flex-basis: 100% }
+  .who { margin-left: auto; font-size: 12.5px }
+  #who { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .view { padding-top: 14px; gap: 12px }
+  h1 { font-size: 21px }
+  .stat b { font-size: 22px }
+}

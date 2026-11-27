@@ -338,9 +338,12 @@ function questionFilter(qy) {
 }
 app.get("/api/questions", auth, admin, wrap(async req => {
   const { w, args } = questionFilter(req.query);
-  const limit = 100, offset = Math.max(0, Number(req.query.offset) || 0);
-  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image, answer, fmt, source, year, exam
+  const full = req.query.full === "1";
+  const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), full ? 50 : 300), offset = Math.max(0, Number(req.query.offset) || 0);
+  const cols = full ? "text, solution, image, options" : "substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image";
+  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, ${cols}, answer, fmt, source, year, exam
                    FROM questions WHERE ${w} ORDER BY subject, chapter, year DESC, id LIMIT ${limit} OFFSET ${offset}`, ...args);
+  if (full) rows.forEach(r => (r.options = JSON.parse(r.options || "[]")));
   const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
                    chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
                    years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year),

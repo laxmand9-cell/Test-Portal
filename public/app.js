@@ -447,7 +447,7 @@
 
   // ================================================================ question bank
   const QT = { single: "Single correct", multi: "One or more correct", integer: "Integer", decimal: "Decimal" };
-  const QLEVELS = ["Basic", "Easy", "Medium", "Hard", "Very hard"];
+  const QLEVELS = ["Easy", "Medium", "Difficult"];
   // a dropdown where several options can be ticked; onchange gets the ticked values
   function multiPick(label, id, onchange) {
     let options = [], chosen = new Set();

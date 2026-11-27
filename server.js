@@ -299,7 +299,10 @@ app.post("/api/admins", auth, central, wrap(async req => {
 
 // ------------------------------------------------------------------ question bank
 const QTYPES = ["single", "multi", "integer", "decimal"];
-const QLEVELS = ["Basic", "Easy", "Medium", "Hard", "Very hard"];
+const QLEVELS = ["Easy", "Medium", "Difficult"];
+// older names map onto the three levels
+const LEVEL_MAP = { Basic: "Easy", Hard: "Difficult", "Very hard": "Difficult" };
+const levelOf = v => (QLEVELS.includes(v) ? v : LEVEL_MAP[v] || "Medium");
 function cleanQuestion(b) {
   const qtype = QTYPES.includes(b.qtype) ? b.qtype : bad("Choose a question type.");
   let options = Array.isArray(b.options) ? b.options.map(o => str(o, 4000)) : [];
@@ -313,7 +316,7 @@ function cleanQuestion(b) {
   if (!str(b.text, 60000) && !image) bad("Add the question text or an image.");
   return {
     subject: str(b.subject, 40) || bad("Subject is needed."), chapter: str(b.chapter, 120), topic: str(b.topic, 120), qtype,
-    difficulty: QLEVELS.includes(b.difficulty) ? b.difficulty : "Medium", exam: str(b.exam, 40),
+    difficulty: levelOf(b.difficulty), exam: str(b.exam, 40),
     text: str(b.text, 60000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 60000),
     fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120),
   };
@@ -406,7 +409,7 @@ app.post("/api/packs/:id/load", auth, central, wrap(async req => {
   await tx(async () => {
     for (let i = 0; i < todo.length; i += 150) {
       const chunk = todo.slice(i, i + 150), args = [];
-      for (const q of chunk) args.push(q.subject, q.chapter, q.topic || "", q.qtype, QLEVELS.includes(q.difficulty) ? q.difficulty : "Medium", q.text, "", "[]", q.answer, q.solution || "", req.user.id, "html", q.source || "", p.prefix + q.ref, q.year || null, q.exam || p.exam);
+      for (const q of chunk) args.push(q.subject, q.chapter, q.topic || "", q.qtype, levelOf(q.difficulty), q.text, "", "[]", q.answer, q.solution || "", req.user.id, "html", q.source || "", p.prefix + q.ref, q.year || null, q.exam || p.exam);
       await run(`INSERT INTO questions (${COLS.join(", ")}) VALUES ${chunk.map(() => "(" + COLS.map(() => "?").join(",") + ")").join(",")}`, ...args);
     }
     // questions added before the Exam field existed get it now
@@ -681,6 +684,8 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   const opened = await openDatabase(process.env, __dirname);
   db = opened.db; DATA_DIR = opened.dataDir; TEMP_STORAGE = opened.temporary;
   ({ q1, qa, run, insert, tx } = db);
+  // questions saved with the old level names move to Easy / Medium / Difficult
+  for (const [from, to] of Object.entries(LEVEL_MAP)) await run("UPDATE questions SET difficulty=? WHERE difficulty=?", to, from);
   console.log(`Data is stored in ${db.kind === "postgres" ? "PostgreSQL (DATABASE_URL)" : db.file}`);
   if (!(await q1("SELECT id FROM users WHERE role='central' LIMIT 1"))) {
     const u = process.env.ADMIN_USER || "admin";

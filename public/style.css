@@ -168,9 +168,7 @@ svg.trend .dot.end { fill: var(--gold); stroke: var(--gold) }
 .bulkbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .bulkbar select { width: auto; }
 td input[type=checkbox], th input[type=checkbox] { width: auto; }
-.pill.lv1 { background: var(--ok-soft); color: var(--ok); } .pill.lv2 { background: #e3f0fb; color: #1f5f99; }
-.pill.lv3 { background: var(--sunk); color: var(--fg); } .pill.lv4 { background: var(--warn-soft); color: var(--warn); } .pill.lv5 { background: var(--bad-soft); color: var(--bad); }
-@media (prefers-color-scheme: dark) { .pill.lv2 { background: #12283d; color: #8cc2f0; } }
+.pill.lv1 { background: var(--ok-soft); color: var(--ok); } .pill.lv2 { background: var(--sunk); color: var(--fg); } .pill.lv3 { background: var(--bad-soft); color: var(--bad); }
 .rich .passage { background: var(--sunk); border-left: 3px solid var(--gold); border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; }
 @media (max-width: 600px) { .mp-pop { position: fixed; left: 16px; right: 16px; top: auto; width: auto; margin-top: 4px; } }
 

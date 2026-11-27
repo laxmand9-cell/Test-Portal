@@ -36,6 +36,7 @@ const TABLES = [
      batch_id INTEGER NOT NULL REFERENCES batches(id), PRIMARY KEY(test_id, batch_id))`,
   `attempts (id {ID}, test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE, student_id INTEGER NOT NULL REFERENCES users(id),
      started_at BIGINT NOT NULL, ends_at BIGINT NOT NULL, state TEXT NOT NULL DEFAULT '{}', saved_at BIGINT, submitted_at BIGINT, UNIQUE(test_id, student_id))`,
+  `settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
   `test_questions (test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE, qno INTEGER NOT NULL,
      question_id INTEGER NOT NULL REFERENCES questions(id), PRIMARY KEY(test_id, qno))`,
   `results (id {ID}, test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,

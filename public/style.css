@@ -277,3 +277,56 @@ body.exam-mode .view { max-width: none; padding: 0; gap: 0; }
   .nta-timebox { margin-left: auto; } .nta-timebox span { display: none; }
   .nta-time { font-size: 18px; }
 }
+
+/* ================= printed papers: black & white, A4, two columns ================= */
+body.print-mode .view { max-width: 900px; }
+.pp-toolbar { display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
+.pp-tools { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.pp-opt { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; font-weight: 600; }
+.pp-opt input { width: auto; } .pp-opt select { width: auto; padding: 5px 8px; }
+.pp-out { display: grid; gap: 16px; font-family: "Times New Roman", "Noto Serif", Georgia, serif; line-height: 1.38; }
+.pp-page { background: #fff; color: #000; box-shadow: 0 1px 6px rgba(0,0,0,.18); padding: 12mm 10mm; width: 100%; max-width: 210mm; margin: 0 auto; color-scheme: light; }
+.pp-page .rich img.qf, .pp-page img { filter: none !important; background: #fff; }
+.pp-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4mm; align-items: center; border-bottom: 1.2pt solid #000; padding-bottom: 2.5mm; }
+.pp-logo { max-height: 17mm; max-width: 40mm; object-fit: contain; }
+.pp-org { font: 700 1.55em/1.15 Arial, "Helvetica Neue", sans-serif; letter-spacing: .01em; text-transform: uppercase; }
+.pp-tag { font: .85em Arial, sans-serif; color: #222; }
+.pp-test { text-align: right; font: .9em/1.3 Arial, sans-serif; } .pp-test b { font-size: 1.12em; } .pp-doc { font-weight: 700; text-transform: uppercase; margin-top: 1mm; }
+.pp-meta { display: flex; justify-content: space-between; gap: 4mm; font: .92em Arial, sans-serif; padding: 1.6mm 0; border-bottom: .5pt solid #000; }
+.pp-cand { display: flex; gap: 6mm; padding: 2.4mm 0 1.6mm; font: .92em Arial, sans-serif; }
+.pp-cand span { display: flex; gap: 2mm; flex: 1; align-items: flex-end; } .pp-cand i { flex: 1; border-bottom: .6pt solid #000; height: 4.5mm; }
+.pp-cand span:last-child { flex: 0 0 55mm; }
+.pp-instr { border: .6pt solid #000; padding: 1.6mm 3mm; font-size: .9em; margin-bottom: 3mm; }
+.pp-instr ol { margin: .6mm 0 0; padding-left: 5mm; } .pp-instr li { margin: .2mm 0; }
+.pp-out.cols2 .pp-cols { column-count: 2; column-gap: 7mm; column-rule: .5pt solid #777; }
+.pp-sec { column-span: all; font: 700 .95em Arial, sans-serif; text-transform: none; letter-spacing: 0; color: #000; background: #eee; border: .6pt solid #000; padding: 1mm 2mm; margin: 2mm 0 2mm; }
+.pp-sec span { font-weight: 400; font-size: .92em; }
+.pp-q { display: grid; grid-template-columns: 7mm minmax(0, 1fr); break-inside: avoid; page-break-inside: avoid; margin: 0 0 2.6mm; }
+.pp-q.missing { color: #666; font-style: italic; }
+.pp-no { font-family: Arial, sans-serif; }
+.pp-body { min-width: 0; } .pp-body .rich { overflow: visible; line-height: 1.38; }
+.pp-body .rich p { margin: 0 0 1.2mm; } .pp-body .rich img.qf { max-width: 100% !important; height: auto; display: block; margin: 1mm 0; }
+.pp-body .katex { font-size: 1.05em; } .pp-body .katex-display { margin: .8mm 0; overflow: visible; }
+.pp-src { font: italic .78em Arial, sans-serif; color: #333; display: block; }
+.pp-opts { display: grid; gap: .6mm 3mm; margin-top: .6mm; } .pp-opts p { margin: 0 !important; }
+.pp-opts.c2 { grid-template-columns: 1fr 1fr; } .pp-opts.c4 { grid-template-columns: repeat(4, 1fr); }
+.pp-ans { font: 700 .92em Arial, sans-serif; margin-bottom: .6mm; }
+.pp-key { display: grid; grid-template-columns: repeat(10, 1fr); border-top: .6pt solid #000; border-left: .6pt solid #000; margin-top: 4mm; font-family: Arial, sans-serif; }
+.pp-kc { display: grid; grid-template-columns: 1fr 1fr; border-right: .6pt solid #000; border-bottom: .6pt solid #000; font-size: .95em; }
+.pp-kc b { background: #eee; text-align: center; border-right: .4pt solid #000; padding: .8mm 0; } .pp-kc span { text-align: center; padding: .8mm 0; }
+.pp-end { text-align: center; font: italic .85em Arial, sans-serif; margin-top: 3mm; column-span: all; }
+.pp-img { max-width: 100%; }
+@media print {
+  @page { size: A4; margin: 11mm 10mm 13mm; }
+  html, body { background: #fff !important; }
+  body.print-mode #bar, .no-print, #toast, #modal { display: none !important; }
+  body.print-mode .view { max-width: none; padding: 0 !important; margin: 0; display: block; }
+  .pp-out { display: block; }
+  .pp-page { box-shadow: none; padding: 0; max-width: none; width: auto; margin: 0; }
+  .pp-break { break-before: page; page-break-before: always; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+@media (max-width: 700px) { .pp-page { padding: 6mm 4mm; } .pp-out.cols2 .pp-cols { column-count: 1; } .pp-key { grid-template-columns: repeat(5, 1fr); } }
+/* figures: keep them small on paper (they stay sharp) */
+.pp-body .rich img.qf, .pp-body img.pp-img { width: auto !important; max-width: min(100%, 70mm) !important; max-height: 38mm; object-fit: contain; }
+.pp-out.cols1 .pp-body .rich img.qf { max-width: min(100%, 85mm) !important; max-height: 45mm; }

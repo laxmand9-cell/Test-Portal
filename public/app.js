@@ -694,6 +694,7 @@
         h("p", { class: "sub" }, `${t.code} · ${fmtDate(t.test_date)} · ${t.sheet_title} · ${t.questions} questions · ${t.batch_ids.length} batch${t.batch_ids.length === 1 ? "" : "es"}`)),
         h("div", { class: "row" }, t.mode && t.mode !== "omr" ? h("span", { class: "pill navy" }, t.mode === "cbt" ? `Online · ${t.duration} min` : `Online + OMR · ${t.duration} min`) : null,
           h("span", { class: "pill " + (t.published ? "ok" : "warn") }, t.published ? "Published to students" : "Not published yet"),
+          h("a", { class: "btn gold small", href: `#/print/${id}` }, "Print paper"),
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
       h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
@@ -744,6 +745,148 @@
       h("div", { class: "card" }, h("p", { class: "small", style: "margin:0" }, `${t.linked.length} of ${idx.length} questions are picked from the question bank; their answers are filled in above automatically. `,
         h("a", { href: `#/tests/${t.id}/questions` }, "Pick questions"))));
   }
+
+  // ================================================================ printed papers
+  // heading used on every printed paper: logo, institute name, a second line, default instructions
+  route(/^\/settings\/paper$/, async view => {
+    const st = await GET("/api/settings/paper");
+    let logo = st.logo || "";
+    const inst = h("input", { id: "ps-inst", value: st.institute, maxlength: 120, placeholder: "Institute name, as it should appear on papers" });
+    const tag = h("input", { id: "ps-tag", value: st.tagline, maxlength: 160, placeholder: "e.g. Madhapur, Hyderabad · Ph. 98xxxxxx · www.example.com" });
+    const ins = h("textarea", { id: "ps-inst-text", rows: 5, placeholder: "Optional extra instructions, one per line. Marking rules for each section are added automatically." }, st.instructions || "");
+    const prev = h("img", { alt: "Logo", style: "max-height:70px;max-width:220px" });
+    const rm = h("button", { class: "btn ghost small", type: "button", onclick: () => { logo = ""; draw(); } }, "Remove logo");
+    const file = h("input", { id: "ps-logo", type: "file", accept: "image/png,image/jpeg,image/webp" });
+    const draw = () => { prev.hidden = !logo; rm.hidden = !logo; if (logo) prev.src = logo; };
+    file.onchange = () => {
+      const f = file.files[0]; if (!f) return;
+      const img = new Image(), url = URL.createObjectURL(f);
+      img.onload = () => { // shrink to a sharp but small image so papers stay light
+        const scale = Math.min(1, 600 / img.width, 240 / img.height), c = document.createElement("canvas");
+        c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+        const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
+        logo = c.toDataURL("image/png"); if (logo.length > 380000) logo = c.toDataURL("image/jpeg", 0.85);
+        URL.revokeObjectURL(url); draw();
+      };
+      img.src = url;
+    };
+    const err = h("p", { class: "err small" });
+    show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "javascript:history.back()" }, "‹ Back"), h("h1", {}, "Paper heading"),
+      h("p", { class: "sub" }, "Shown at the top of every printed question paper, answer key and solutions sheet."))),
+      h("form", { class: "card", onsubmit: async e => {
+        e.preventDefault(); err.textContent = "";
+        try { await PUT("/api/settings/paper", { institute: inst.value.trim(), tagline: tag.value.trim(), instructions: ins.value, logo }); toast("Paper heading saved"); }
+        catch (x) { err.textContent = x.message; }
+      } }, field("Institute name", inst), field("Second line", tag, "Optional: campus, address, phone or website"),
+        h("div", { class: "row", style: "align-items:center" }, field("Logo", file, "PNG or JPG. A logo on a white background prints best."), h("span", { class: "shrink" }, prev), rm),
+        field("Extra instructions", ins), err, h("div", {}, h("button", { class: "btn", type: "submit" }, "Save heading"))));
+    draw();
+  }, ["central"]);
+
+  route(/^\/print\/(\d+)$/, async (view, id) => {
+    const P = await GET(`/api/tests/${id}/paper`);
+    const S = P.settings, T = P.test;
+    const pref = (() => { try { return JSON.parse(localStorage.getItem("tp-print") || "{}"); } catch (e) { return {}; } })();
+    const opt = Object.assign({ cols: "2", size: "10.5", paper: true, key: false, sol: false, tags: false }, pref);
+    const keep = () => { try { localStorage.setItem("tp-print", JSON.stringify(opt)); } catch (e) { /* off */ } };
+    const byNo = Object.fromEntries(P.questions.map(q => [q.qno, q]));
+    const total = P.sections.reduce((n, s) => n + s.count, 0), maxMarks = P.sections.reduce((n, s) => n + s.count * s.marks.correct, 0);
+    const missing = total - P.questions.length;
+    const hours = T.duration % 60 ? `${T.duration} minutes` : `${T.duration / 60} hour${T.duration === 60 ? "" : "s"}`;
+    const nice = s => s.charAt(0) + s.slice(1).toLowerCase();
+    const ans = (s, a) => (a == null || a === "" ? "—" : s.options === "1234" && /^[A-D]+$/.test(a) ? [...a].map(c => "ABCD".indexOf(c) + 1).join(", ") : s.qtype === "multi" ? [...a].join(", ") : a);
+    const markLine = s => `${s.qtype === "single" ? "Single correct" : s.qtype === "multi" ? "One or more correct" : s.qtype === "integer" ? "Integer answer" : "Numerical answer"} · +${s.marks.correct} correct${s.marks.wrong ? `, −${Math.abs(s.marks.wrong)} wrong` : ", no negative marks"}`;
+    // put the four options of a question side by side when they are short
+    function tidyOptions(box) {
+      const ps = [...box.children];
+      for (let i = 0; i + 3 < ps.length; i++) {
+        const four = ps.slice(i, i + 4);
+        if (!four.every((p, k) => p.tagName === "P" && p.textContent.trim().startsWith(`(${"ABCD"[k]})`))) continue;
+        const short = four.every(p => p.textContent.trim().length <= 34 && !p.querySelector("img,.katex-display"));
+        const tiny = four.every(p => p.textContent.trim().length <= 16 && !p.querySelector("img,.katex-display"));
+        const grid = h("div", { class: "pp-opts " + (tiny ? "c4" : short ? "c2" : "c1") });
+        four[0].before(grid); grid.append(...four);
+        break;
+      }
+    }
+    function head(title) {
+      return h("header", { class: "pp-head" },
+        S.logo ? h("img", { class: "pp-logo", src: S.logo, alt: "" }) : null,
+        h("div", { class: "pp-inst-name" }, h("div", { class: "pp-org" }, S.institute || "Your institute name"), S.tagline ? h("div", { class: "pp-tag" }, S.tagline) : null),
+        h("div", { class: "pp-test" }, h("b", {}, T.name), h("div", {}, `${T.code}${T.test_date ? " · " + fmtDate(T.test_date) : ""}`), title ? h("div", { class: "pp-doc" }, title) : null));
+    }
+    function paperDoc() {
+      const idx = []; let q = 1; P.sections.forEach(s => { idx.push([s, q, q + s.count - 1]); q += s.count; });
+      const extra = (S.instructions || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      const doc = h("section", { class: "pp-page" }, head(""),
+        h("div", { class: "pp-meta" }, h("span", {}, h("b", {}, "Time: "), hours), h("span", {}, h("b", {}, "Maximum marks: "), maxMarks), h("span", {}, h("b", {}, "Questions: "), total)),
+        h("div", { class: "pp-cand" }, h("span", {}, "Name: ", h("i", {})), h("span", {}, "Roll No.: ", h("i", { class: "short" }))),
+        h("div", { class: "pp-instr" }, h("b", {}, "Instructions"), h("ol", {},
+          ...idx.map(([s, a, b]) => h("li", {}, `Q${a}–Q${b} (${s.name}): ${markLine(s)}.`)),
+          ...extra.map(x => h("li", {}, x)))));
+      const cols = h("div", { class: "pp-cols" });
+      idx.forEach(([s, a, b]) => {
+        cols.append(h("h3", { class: "pp-sec" }, `${s.name}`, h("span", {}, ` · Q${a}–Q${b} · ${markLine(s)}`)));
+        for (let n = a; n <= b; n++) {
+          const qq = byNo[n];
+          if (!qq) { cols.append(h("div", { class: "pp-q missing" }, h("b", { class: "pp-no" }, `${n}.`), " Question not picked yet.")); continue; }
+          const body = qq.fmt === "html" ? richNode(qq.text) : h("div", { style: "white-space:pre-wrap" }, qq.text || "");
+          if (qq.fmt === "html") tidyOptions(body);
+          cols.append(h("div", { class: "pp-q" }, h("b", { class: "pp-no" }, `${n}.`), h("div", { class: "pp-body" },
+            opt.tags && qq.source ? h("span", { class: "pp-src" }, `[${qq.source}]`) : null, body,
+            qq.image ? h("img", { src: qq.image, alt: "", class: "pp-img" }) : null,
+            (qq.qtype === "single" || qq.qtype === "multi") && qq.options.some(Boolean) ? h("div", { class: "pp-opts c2" }, qq.options.map((o, k) => h("p", {}, `(${s.options === "1234" ? k + 1 : "ABCD"[k]}) ${o}`))) : null)));
+        }
+      });
+      doc.append(cols, h("p", { class: "pp-end" }, "— End of question paper —"));
+      return doc;
+    }
+    function keyDoc() {
+      const cells = []; let q = 1;
+      P.sections.forEach(s => { for (let i = 0; i < s.count; i++, q++) cells.push(h("div", { class: "pp-kc" }, h("b", {}, q), h("span", {}, ans(s, T.answer_key[q])))); });
+      return h("section", { class: "pp-page pp-break" }, head("Answer key"), h("div", { class: "pp-key" }, cells));
+    }
+    function solDoc() {
+      const cols = h("div", { class: "pp-cols" }); let q = 1;
+      P.sections.forEach(s => {
+        cols.append(h("h3", { class: "pp-sec" }, s.name));
+        for (let i = 0; i < s.count; i++, q++) {
+          const qq = byNo[q];
+          cols.append(h("div", { class: "pp-q" }, h("b", { class: "pp-no" }, `${q}.`), h("div", { class: "pp-body" }, h("div", { class: "pp-ans" }, `Answer: ${ans(s, T.answer_key[q])}`),
+            qq && qq.solution ? (qq.fmt === "html" ? richNode(qq.solution) : h("div", { style: "white-space:pre-wrap" }, qq.solution)) : h("p", { class: "muted" }, "No solution in the bank."))));
+        }
+      });
+      return h("section", { class: "pp-page pp-break" }, head("Solutions"), cols);
+    }
+    const out = h("div", { class: "pp-out" });
+    const pageStyle = h("style", {});
+    function draw() {
+      out.className = `pp-out cols${opt.cols}`; out.style.fontSize = opt.size + "pt";
+      const docs = [opt.paper ? paperDoc() : null, opt.key ? keyDoc() : null, opt.sol ? solDoc() : null].filter(Boolean);
+      if (docs[0]) docs[0].classList.remove("pp-break");
+      show(out, docs.length ? docs : h("p", { class: "empty" }, "Tick what to print above."));
+      pageStyle.textContent = `@page { size: A4; margin: 11mm 10mm 13mm; @bottom-center { content: "${T.code.replace(/"/g, "")}  ·  Page " counter(page) " of " counter(pages); font: 8pt Arial, sans-serif; color: #444; } }`;
+    }
+    const sel = (id, label, vals, k) => h("label", { class: "pp-opt" }, label, h("select", { id, onchange: e => { opt[k] = e.target.value; keep(); draw(); } }, vals.map(([v, t]) => h("option", { value: v, selected: opt[k] === v }, t))));
+    const chk = (id, label, k) => h("label", { class: "pp-opt" }, h("input", { id, type: "checkbox", checked: !!opt[k], onchange: e => { opt[k] = e.target.checked; keep(); draw(); } }), label);
+    const bar = h("div", { class: "pp-toolbar no-print" },
+      h("a", { href: `#/tests/${id}` }, "‹ Back to test"),
+      h("div", { class: "pp-tools" },
+        chk("pp-paper", "Question paper", "paper"), chk("pp-key", "Answer key", "key"), chk("pp-sol", "Solutions", "sol"),
+        sel("pp-cols", "Layout", [["2", "2 columns (saves paper)"], ["1", "1 column"]], "cols"),
+        sel("pp-size", "Text size", [["10", "Small"], ["10.5", "Medium"], ["11.5", "Large"]], "size"),
+        chk("pp-tags", "Show exam & year with questions", "tags"),
+        h("button", { class: "btn gold", type: "button", onclick: () => window.print() }, "Print / Save as PDF")),
+      h("p", { class: "small muted", style: "margin:0" }, missing ? h("span", { class: "err" }, `${missing} question${missing === 1 ? " is" : "s are"} not picked yet. `) : null,
+        "In the print window choose A4, print on both sides, and turn off “Headers and footers”. ",
+        state.me.role === "central" ? h("a", { href: "#/settings/paper" }, S.institute || S.logo ? "Change logo and heading" : "Add your logo and institute name") : null));
+    document.body.classList.add("print-mode");
+    const leave = () => { document.body.classList.remove("print-mode"); window.removeEventListener("hashchange", leave); };
+    window.addEventListener("hashchange", leave);
+    show(view, pageStyle, bar, out);
+    draw();
+  }, ["central", "zone", "campus"]);
+
   // ---- questions: pick from the bank, section by section
   const SEC_QTYPE = { single: "single", multi: "multi", integer: "integer", decimal: "decimal|integer" };
   const titleCase = s => s.charAt(0) + s.slice(1).toLowerCase();
@@ -772,7 +915,7 @@
       const n = Object.keys(links).length;
       show(summary, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Questions for this test"),
         h("p", { class: "small muted", style: "margin:0" }, "Pick questions for each section from the question bank. Their answers go into the answer key automatically, and students see each question with its solution in their results.")),
-        h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`)),
+        h("div", { class: "row" }, h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`), n ? h("a", { class: "btn gold small", href: `#/print/${t.id}` }, "Print paper") : null)),
         t.mode && t.mode !== "omr" && n < idx.length ? h("p", { class: "err small", style: "margin:0" }, "This is an online test: students can start it only after every question number has a question.") : null);
       show(wrap, secs.map(s => sectionCard(s)));
     }

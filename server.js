@@ -645,6 +645,35 @@ async function studentReport(t, studentId) {
     detail: s.detail.map(d => ({ ...d, question: linked[d.q] || null })) };
 }
 
+// ------------------------------------------------------------------ printed papers: heading settings and paper data
+const PAPER_KEYS = { institute: 120, tagline: 160, logo: 400_000, instructions: 4000 };
+async function paperSettings() {
+  const out = { institute: "", tagline: "", logo: "", instructions: "" };
+  for (const r of await qa("SELECT key, value FROM settings WHERE key LIKE 'paper.%'")) out[r.key.slice(6)] = r.value;
+  return out;
+}
+app.get("/api/settings/paper", auth, admin, wrap(() => paperSettings()));
+app.put("/api/settings/paper", auth, central, wrap(async req => {
+  const b = req.body || {};
+  if (b.logo && !/^data:image\/(png|jpeg|webp);base64,/.test(b.logo)) bad("Logo must be a PNG, JPG or WEBP image.");
+  if (b.logo && b.logo.length > PAPER_KEYS.logo) bad("Logo is too big. Use an image under 250 KB.");
+  await tx(async () => { for (const [k, max] of Object.entries(PAPER_KEYS)) if (k in b) {
+    await run("DELETE FROM settings WHERE key=?", "paper." + k);
+    await run("INSERT INTO settings (key, value) VALUES (?,?)", "paper." + k, String(b[k] ?? "").slice(0, max));
+  } });
+  return paperSettings();
+}));
+app.get("/api/tests/:id/paper", auth, admin, wrap(async req => {
+  const t = await testRow(await visibleTest(req.user, req.params.id));
+  const layout = layoutOf(t);
+  const qs = await qa(`SELECT tq.qno, q.id, q.text, q.image, q.options, q.fmt, q.qtype, q.answer, q.solution, q.source, q.chapter FROM test_questions tq
+                       JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=? ORDER BY tq.qno`, t.id);
+  qs.forEach(q => (q.options = JSON.parse(q.options || "[]")));
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, duration: t.duration || DEFAULT_MIN[t.sheet] || 180, sheet_title: layout.title, answer_key: t.answer_key },
+    sections: layout.sections.map(s => ({ name: s.name, subject: s.subject, qtype: s.qtype, count: s.count, options: s.options, marks: s.marks })),
+    questions: qs, settings: await paperSettings() };
+}));
+
 // ------------------------------------------------------------------ online test (CBT), NTA style
 const GRACE_MS = 90 * 1000; // network delay allowance after the clock reaches zero
 async function cbtTestsFor(user) {

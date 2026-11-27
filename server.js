@@ -653,6 +653,8 @@ async function paperSettings() {
   return out;
 }
 app.get("/api/settings/paper", auth, admin, wrap(() => paperSettings()));
+// logo and name for the login page (shown before anyone logs in)
+app.get("/api/brand", wrap(async () => { const p = await paperSettings(); return { institute: p.institute, tagline: p.tagline, logo: p.logo }; }));
 app.put("/api/settings/paper", auth, central, wrap(async req => {
   const b = req.body || {};
   if (b.logo && !/^data:image\/(png|jpeg|webp);base64,/.test(b.logo)) bad("Logo must be a PNG, JPG or WEBP image.");

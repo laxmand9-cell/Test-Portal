@@ -111,6 +111,7 @@
       try { state.me = await GET("/api/me"); } catch (e) { return; }
     }
     const view = $("#view");
+    document.body.classList.toggle("login-mode", hash === "/login");
     if (hash === "/login") { $("#bar").hidden = true; return loginView(view); }
     drawBar(hash);
     for (const r of routes) {
@@ -166,12 +167,16 @@
     const u = h("input", { id: "login-user", autocomplete: "username", required: true });
     const p = h("input", { id: "login-pass", type: "password", autocomplete: "current-password", required: true });
     const err = h("p", { class: "err small" });
+    const eye = h("button", { class: "eye", type: "button", "aria-label": "Show password", html: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>', onclick: () => { const show = p.type === "password"; p.type = show ? "text" : "password"; eye.setAttribute("aria-label", show ? "Hide password" : "Show password"); eye.classList.toggle("on", show); } });
+    const brandBox = h("div", { class: "login-brand" }, h("h1", {}, "Test Portal"));
+    GET("/api/brand").then(b => { if (b.logo || b.institute) show(brandBox, b.logo ? h("img", { src: b.logo, alt: b.institute || "Logo" }) : null,
+      b.institute ? h("div", { class: "login-org" }, b.institute) : null, b.tagline ? h("div", { class: "small muted" }, b.tagline) : null); }).catch(() => {});
     const form = h("form", { class: "card login", onsubmit: async e => {
       e.preventDefault(); err.textContent = "";
       try { await POST("/api/login", { username: u.value, password: p.value }); state.me = await GET("/api/me"); state.s = null; location.hash = state.me.role === "student" ? "#/my" : "#/"; }
       catch (x) { err.textContent = x.message; }
-    } }, h("h1", {}, "Test Portal"), h("p", { class: "sub" }, "Log in with the username and password your institute gave you."),
-      field("Username", u), field("Password", p), err, h("button", { class: "btn", type: "submit" }, "Log in"));
+    } }, brandBox, h("p", { class: "sub", style: "text-align:center;margin:0" }, "Log in with the username and password your institute gave you."),
+      field("Username / Roll number", u), h("label", { class: "f" }, "Password", h("div", { class: "pw" }, p, eye)), err, h("button", { class: "btn login-btn", type: "submit" }, "LOGIN"));
     show(view, form);
     if (window.__previewAccounts) {
       form.append(h("div", { style: "border-top:1px solid var(--line);padding-top:12px;display:grid;gap:8px" },

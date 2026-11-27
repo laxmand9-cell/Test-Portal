@@ -330,3 +330,25 @@ body.print-mode .view { max-width: 900px; }
 /* figures: keep them small on paper (they stay sharp) */
 .pp-body .rich img.qf, .pp-body img.pp-img { width: auto !important; max-width: min(100%, 70mm) !important; max-height: 38mm; object-fit: contain; }
 .pp-out.cols1 .pp-body .rich img.qf { max-width: min(100%, 85mm) !important; max-height: 45mm; }
+
+/* ================= login page: green, like the institute's student portal ================= */
+body.login-mode { background: linear-gradient(135deg, #cbe94d 0%, #b5cf45 45%, #98ae3a 100%) fixed; min-height: 100vh; color-scheme: light; }
+body.login-mode .view { min-height: 100vh; align-content: center; padding-top: 24px; }
+body.login-mode .login { --navy: #6f8f14; --gold: #b8d347; --fg: #1d2410; --muted: #5b6450; --line: #d5dcc4; --sunk: #fff; --surface: #fff;
+  background: #fff; color: #1d2410; border: 0; border-radius: 4px; box-shadow: 0 6px 24px rgba(40, 55, 0, .25); padding: 28px 26px 26px; gap: 16px; margin: 0 auto; }
+body.login-mode .login .sub { color: #5b6450; }
+.login-brand { display: grid; justify-items: center; gap: 4px; text-align: center; padding-bottom: 4px; }
+.login-brand img { max-width: 260px; max-height: 80px; object-fit: contain; }
+.login-brand h1 { color: #4f6a0a; }
+.login-org { font-weight: 800; font-size: 18px; color: #2d3a0a; }
+body.login-mode .login input { background: #fff; border: 0; border-bottom: 1.5px solid #c9d1b5; border-radius: 0; padding: 9px 2px; font-size: 16px; color: #1d2410; }
+body.login-mode .login input:focus { outline: none; border-bottom-color: #8fb31c; }
+body.login-mode .login label.f { color: #5b6450; font-weight: 600; }
+.pw { position: relative; } .pw input { padding-right: 36px !important; }
+.eye { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border: 0; background: none; cursor: pointer; color: #9aa38c; display: grid; place-items: center; padding: 0; }
+.eye.on { color: #6f8f14; }
+.login-btn { width: 100%; border-radius: 999px !important; background: #b8d347 !important; color: #fff !important; font-size: 17px !important; letter-spacing: .03em; padding: 11px !important;
+  box-shadow: 0 3px 8px rgba(80, 100, 0, .35); text-shadow: 0 1px 1px rgba(60, 80, 0, .35); }
+.login-btn:hover { background: #a9c63a !important; }
+body.login-mode .login .err { color: #b3261e; }
+body.login-mode .card.login + .card { background: #fff; color: #1d2410; }

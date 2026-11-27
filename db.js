@@ -27,7 +27,8 @@ const TABLES = [
   `sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires BIGINT NOT NULL)`,
   `questions (id {ID}, subject TEXT NOT NULL, chapter TEXT DEFAULT '', topic TEXT DEFAULT '',
      qtype TEXT NOT NULL, difficulty TEXT DEFAULT 'Medium', text TEXT DEFAULT '', image TEXT DEFAULT '', options TEXT DEFAULT '[]',
-     answer TEXT NOT NULL DEFAULT '', solution TEXT DEFAULT '', created_by INTEGER, created_at TEXT DEFAULT {NOW})`,
+     answer TEXT NOT NULL DEFAULT '', solution TEXT DEFAULT '', created_by INTEGER, created_at TEXT DEFAULT {NOW},
+     fmt TEXT DEFAULT '', source TEXT DEFAULT '', ref TEXT DEFAULT '', year INTEGER)`,
   `tests (id {ID}, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, test_date TEXT DEFAULT '',
      sheet TEXT NOT NULL, answer_key TEXT DEFAULT '{}', published INTEGER NOT NULL DEFAULT 0, created_by INTEGER,
      created_at TEXT DEFAULT {NOW})`,
@@ -40,6 +41,9 @@ const TABLES = [
      uploaded_at TEXT DEFAULT {NOW}, UNIQUE(test_id, student_id))`,
 ];
 const TABLE_NAMES = TABLES.map(t => t.split(" ")[0]);
+// columns added after the first release; older databases get them on start-up
+const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"]];
+const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
 const PG_NOW = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')";
 
 // PostgreSQL error -> the same messages the SQLite backend gives, so callers handle one kind
@@ -64,6 +68,8 @@ async function openPostgres(url) {
   for (const t of TABLES)
     await pool.query("CREATE TABLE IF NOT EXISTS " + t.replace(/\{ID\}/g, "SERIAL PRIMARY KEY").replace("{USERNAME}", "").replace(/\{NOW\}/g, `(${PG_NOW})`));
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (lower(username))");
+  for (const [t, c, def] of ADDED_COLUMNS) await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS ${c} ${def}`);
+  for (const i of INDEXES) await pool.query(i);
   return {
     kind: "postgres",
     q1: async (sql, ...a) => (await exec(sql, a)).rows[0],
@@ -92,6 +98,9 @@ function openSqlite(dataDir) {
   d.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   for (const t of TABLES)
     d.exec("CREATE TABLE IF NOT EXISTS " + t.replace(/\{ID\}/g, "INTEGER PRIMARY KEY").replace("{USERNAME}", "UNIQUE COLLATE NOCASE").replace(/\{NOW\}/g, "(datetime('now'))"));
+  for (const [t, c, def] of ADDED_COLUMNS)
+    if (!d.prepare(`PRAGMA table_info(${t})`).all().some(r => r.name === c)) d.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
+  for (const i of INDEXES) d.exec(i);
   let inTx = false;
   return {
     kind: "sqlite", file,

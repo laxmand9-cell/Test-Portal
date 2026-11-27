@@ -49,6 +49,8 @@ app.use((req, res, next) => {
   res.set("Referrer-Policy", "same-origin");
   next();
 });
+// question figures never change once made (names are content hashes), so phones can keep them
+app.use("/qimg", express.static(path.join(__dirname, "public", "qimg"), { maxAge: "30d", immutable: true }));
 app.use(express.static(path.join(__dirname, "public"), {
   index: "index.html", maxAge: "1h",
   // the app-update file must always be checked fresh, so phones pick up new versions
@@ -307,22 +309,27 @@ function cleanQuestion(b) {
   if (qtype === "single" || qtype === "multi") options = options.slice(0, 4); else options = [];
   const image = str(b.image, 3_000_000);
   if (image && !/^data:image\/(png|jpeg|webp|gif);base64,/.test(image)) bad("Image must be PNG, JPG, WEBP or GIF.");
-  if (!str(b.text, 20000) && !image) bad("Add the question text or an image.");
+  if (!str(b.text, 60000) && !image) bad("Add the question text or an image.");
   return {
     subject: str(b.subject, 40) || bad("Subject is needed."), chapter: str(b.chapter, 120), topic: str(b.topic, 120), qtype,
     difficulty: ["Easy", "Medium", "Hard"].includes(b.difficulty) ? b.difficulty : "Medium",
-    text: str(b.text, 20000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 20000),
+    text: str(b.text, 60000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 60000),
+    fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120),
   };
 }
 app.get("/api/questions", auth, admin, wrap(async req => {
   const where = ["1=1"], args = [];
   for (const k of ["subject", "chapter", "qtype", "difficulty"]) if (req.query[k]) { where.push(`${k}=?`); args.push(str(req.query[k], 120)); }
-  if (req.query.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ?)"); const l = `%${str(req.query.q, 60)}%`; args.push(l, l, l); }
-  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, substr(text,1,300) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image, answer
-                   FROM questions WHERE ${where.join(" AND ")} ORDER BY subject, chapter, id DESC LIMIT 1000`, ...args);
+  if (req.query.year) { where.push("year=?"); args.push(Number(req.query.year) || 0); }
+  if (req.query.pyq === "1") where.push("source != ''");
+  if (req.query.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ? OR source LIKE ?)"); const l = `%${str(req.query.q, 60)}%`; args.push(l, l, l, l); }
+  const w = where.join(" AND ");
+  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image, answer, fmt, source, year
+                   FROM questions WHERE ${w} ORDER BY subject, chapter, year DESC, id LIMIT 300`, ...args);
   const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
-                   chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter") };
-  return { rows, facets, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };
+                   chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
+                   years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year) };
+  return { rows, facets, matching: (await q1(`SELECT COUNT(*) AS n FROM questions WHERE ${w}`, ...args)).n, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };
 }));
 app.get("/api/questions/:id", auth, admin, wrap(async req => {
   const q = await q1("SELECT * FROM questions WHERE id=?", req.params.id);
@@ -332,18 +339,45 @@ app.get("/api/questions/:id", auth, admin, wrap(async req => {
 }));
 app.post("/api/questions", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id) };
+  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source) };
 }));
 app.put("/api/questions/:id", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=? WHERE id=?`,
-    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.params.id);
+  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=? WHERE id=?`,
+    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, req.params.id);
   return { ok: true };
 }));
 app.delete("/api/questions/:id", auth, central, wrap(async req => {
   if (await q1("SELECT 1 AS x FROM test_questions WHERE question_id=?", req.params.id)) bad("This question is used in a test, so it can't be deleted.");
   await run("DELETE FROM questions WHERE id=?", req.params.id); return { ok: true };
+}));
+
+// ------------------------------------------------------------------ ready-made question sets shipped with the app (bank/*.json.gz)
+const PACKS = { "jee-main-pyq-physics": { prefix: "jmp:", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
+  note: "AIEEE 2002 to JEE Main 2026, chapter-wise, with solutions and figures." } };
+const packData = id => JSON.parse(require("zlib").gunzipSync(fs.readFileSync(path.join(__dirname, "bank", PACKS[id].file))).toString("utf8"));
+app.get("/api/packs", auth, central, wrap(async () => {
+  const out = [];
+  for (const [id, p] of Object.entries(PACKS)) {
+    let count = 0; try { count = packData(id).questions.length; } catch (e) { continue; }
+    out.push({ id, name: p.name, note: p.note, count, loaded: (await q1("SELECT COUNT(*) AS n FROM questions WHERE ref LIKE ?", p.prefix + "%")).n });
+  }
+  return out;
+}));
+app.post("/api/packs/:id/load", auth, central, wrap(async req => {
+  const p = PACKS[req.params.id] || bad("Unknown question set.");
+  const have = new Set((await qa("SELECT ref FROM questions WHERE ref LIKE ?", p.prefix + "%")).map(r => r.ref));
+  const todo = packData(req.params.id).questions.filter(q => !have.has(p.prefix + q.ref) && QTYPES.includes(q.qtype));
+  const COLS = ["subject", "chapter", "topic", "qtype", "difficulty", "text", "image", "options", "answer", "solution", "created_by", "fmt", "source", "ref", "year"];
+  await tx(async () => {
+    for (let i = 0; i < todo.length; i += 150) {
+      const chunk = todo.slice(i, i + 150), args = [];
+      for (const q of chunk) args.push(q.subject, q.chapter, q.topic || "", q.qtype, q.difficulty, q.text, "", "[]", q.answer, q.solution || "", req.user.id, "html", q.source || "", p.prefix + q.ref, q.year || null);
+      await run(`INSERT INTO questions (${COLS.join(", ")}) VALUES ${chunk.map(() => "(" + COLS.map(() => "?").join(",") + ")").join(",")}`, ...args);
+    }
+  });
+  return { added: todo.length, total: have.size + todo.length };
 }));
 
 // ------------------------------------------------------------------ tests
@@ -403,7 +437,7 @@ app.delete("/api/tests/:id", auth, central, wrap(async req => { await run("DELET
 app.get("/api/tests/:id", auth, admin, wrap(async req => {
   const t = await testRow(await visibleTest(req.user, req.params.id));
   t.layout = OMR.getLayout(t.sheet);
-  t.linked = await qa(`SELECT tq.qno, q.id, q.subject, q.chapter, q.qtype, substr(q.text,1,160) AS text, q.answer FROM test_questions tq
+  t.linked = await qa(`SELECT tq.qno, q.id, q.subject, q.chapter, q.qtype, substr(q.text,1,160) AS text, q.answer, q.fmt FROM test_questions tq
                  JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=? ORDER BY tq.qno`, t.id);
   return t;
 }));
@@ -544,8 +578,8 @@ async function studentReport(t, studentId) {
   const { scored, max, layout } = await scoreTest(t);
   const s = scored.find(x => x.student_id === studentId);
   if (!s) throw new HttpError(404, "No sheet read for this student yet.");
-  const linked = Object.fromEntries((await qa(`SELECT tq.qno, q.text, q.image, q.options, q.solution, q.chapter FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id))
-    .map(r => [r.qno, { text: r.text, image: r.image, options: JSON.parse(r.options || "[]"), solution: r.solution, chapter: r.chapter }]));
+  const linked = Object.fromEntries((await qa(`SELECT tq.qno, q.text, q.image, q.options, q.solution, q.chapter, q.fmt, q.source FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id))
+    .map(r => [r.qno, { text: r.text, image: r.image, options: JSON.parse(r.options || "[]"), solution: r.solution, chapter: r.chapter, fmt: r.fmt, source: r.source }]));
   return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title }, max,
     subjects: [...new Set(layout.sections.map(x => x.subject))],
     subject_max: layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {}),

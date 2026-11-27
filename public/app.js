@@ -3,7 +3,8 @@
   const O = window.OMR, SH = window.OMRSheet;
   // Heavy tools (scanning, PDF, Excel) load only on the admin screens that use them, so student phones download little.
   const LIBS = { jsqr: "/vendor/jsQR.js", qrcode: "/vendor/qrcode.js", jspdf: "/vendor/jspdf.umd.min.js", jszip: "/vendor/jszip.min.js",
-    pdf: "/vendor/pdf.min.js", pdfworker: "/vendor/pdf.worker.min.js", xlsx: "/vendor/xlsx.full.min.js" };
+    pdf: "/vendor/pdf.min.js", pdfworker: "/vendor/pdf.worker.min.js", xlsx: "/vendor/xlsx.full.min.js",
+    katex: "/vendor/katex/katex.min.js", katexauto: "/vendor/katex/auto-render.min.js" };
   const libLoads = {};
   const loadLib = k => (libLoads[k] = libLoads[k] || new Promise((res, rej) => {
     const s = document.createElement("script"); s.src = LIBS[k];
@@ -11,6 +12,37 @@
     document.head.append(s);
   }));
   async function need(...keys) { for (const k of keys) await loadLib(k); }
+  // ---- questions written as HTML with LaTeX maths (imported question sets)
+  const RICH_TAGS = new Set(["P", "BR", "SPAN", "B", "STRONG", "I", "EM", "SUP", "SUB", "U", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH", "COLGROUP", "COL", "UL", "OL", "LI", "IMG", "DIV", "PRE", "CODE"]);
+  function richNode(html) {
+    const doc = new DOMParser().parseFromString(`<div>${html || ""}</div>`, "text/html");
+    const clean = node => {
+      for (const el of [...node.children]) {
+        if (!RICH_TAGS.has(el.tagName)) { el.replaceWith(...[...el.childNodes].map(n => n.nodeType === 3 ? n : document.createTextNode(n.textContent))); continue; }
+        for (const at of [...el.attributes]) {
+          const ok = (at.name === "class") || (el.tagName === "IMG" && at.name === "src" && /^\/qimg\/[0-9a-f]+\.webp$/.test(at.value)) ||
+            (el.tagName === "IMG" && at.name === "style" && /^width:\d+px$/.test(at.value)) || (el.tagName === "IMG" && at.name === "alt") || (/^(colspan|rowspan)$/.test(at.name) && /^\d+$/.test(at.value));
+          if (!ok) el.removeAttribute(at.name);
+        }
+        if (el.tagName === "IMG") { if (!el.getAttribute("src")) { el.remove(); continue; } el.loading = "lazy"; el.setAttribute("alt", el.getAttribute("alt") || "Figure"); }
+        clean(el);
+      }
+    };
+    const root = doc.body.firstChild; clean(root);
+    const box = h("div", { class: "rich" }); box.append(...root.childNodes);
+    renderMath(box);
+    return box;
+  }
+  let katexCss = null;
+  async function renderMath(el) {
+    if (!/\\\(|\\\[/.test(el.textContent)) return;
+    try {
+      if (!katexCss) { katexCss = h("link", { rel: "stylesheet", href: "/vendor/katex/katex.min.css" }); document.head.append(katexCss); }
+      await need("katex", "katexauto");
+      window.renderMathInElement(el, { delimiters: [{ left: "\\[", right: "\\]", display: true }, { left: "\\(", right: "\\)", display: false }], throwOnError: false });
+    } catch (e) { /* maths stays as plain text */ }
+  }
+  const plainText = (html, n) => { const t = new DOMParser().parseFromString(html || "", "text/html").body.textContent.replace(/\\[()\[\]]/g, "").replace(/\s+/g, " ").trim(); return n ? t.slice(0, n) : t; };
   const $ = (s, root = document) => root.querySelector(s);
   const h = (tag, attrs = {}, ...kids) => {
     const e = document.createElement(tag);
@@ -246,9 +278,9 @@
     const fill = () => {
       const zv = zs.value, cv = cs.value || String(init.campus || ""), bv = bs.value || String(init.batch || "");
       const campuses = s.campuses.filter(c => !zv || String(c.zone_id) === zv);
-      cs.replaceChildren(h("option", { value: "" }, "All campuses"), campuses.map(c => h("option", { value: c.id, selected: String(c.id) === cv }, c.name)));
+      cs.replaceChildren(h("option", { value: "" }, "All campuses"), ...campuses.map(c => h("option", { value: c.id, selected: String(c.id) === cv }, c.name)));
       const batches = s.batches.filter(b => (cs.value ? String(b.campus_id) === cs.value : campuses.some(c => c.id === b.campus_id)));
-      bs.replaceChildren(h("option", { value: "" }, "All batches"), batches.map(b => h("option", { value: b.id, selected: String(b.id) === bv }, `${b.name} · ${LEVEL[b.level]}${cs.value ? "" : " · " + campusName(b.campus_id)}`)));
+      bs.replaceChildren(h("option", { value: "" }, "All batches"), ...batches.map(b => h("option", { value: b.id, selected: String(b.id) === bv }, `${b.name} · ${LEVEL[b.level]}${cs.value ? "" : " · " + campusName(b.campus_id)}`)));
       init = {};
     };
     if (init.batch) { const b = batchOf(Number(init.batch)); if (b) { init.campus = b.campus_id; const c = s.campuses.find(x => x.id === b.campus_id); if (c) zs.value = c.zone_id; } }
@@ -419,30 +451,53 @@
     const subj = h("select", { id: "qb-subject", "aria-label": "Subject" }), chap = h("select", { id: "qb-chapter", "aria-label": "Chapter" });
     const typ = h("select", { id: "qb-type", "aria-label": "Type" }, h("option", { value: "" }, "All types"), Object.entries(QT).map(([k, v]) => h("option", { value: k }, v)));
     const dif = h("select", { id: "qb-diff", "aria-label": "Difficulty" }, h("option", { value: "" }, "Any difficulty"), ["Easy", "Medium", "Hard"].map(d => h("option", {}, d)));
+    const yr = h("select", { id: "qb-year", "aria-label": "Year" }, h("option", { value: "" }, "Any year"));
     const q = h("input", { id: "qb-q", placeholder: "Search text, chapter or topic", "aria-label": "Search" });
     const list = h("div"), count = h("span", { class: "muted small" });
     let first = true, t;
     async function load() {
-      const p = new URLSearchParams(Object.entries({ subject: subj.value, chapter: chap.value, qtype: typ.value, difficulty: dif.value, q: q.value }).filter(([, v]) => v));
+      const p = new URLSearchParams(Object.entries({ subject: subj.value, chapter: chap.value, qtype: typ.value, difficulty: dif.value, year: yr.value, q: q.value }).filter(([, v]) => v));
       const r = await GET("/api/questions?" + p);
       if (first) { first = false; }
-      const sv = subj.value, cv = chap.value;
-      subj.replaceChildren(h("option", { value: "" }, "All subjects"), r.facets.subjects.map(s => h("option", { selected: s === sv }, s)));
-      chap.replaceChildren(h("option", { value: "" }, "All chapters"), r.facets.chapters.filter(c => !sv || c.subject === sv).map(c => h("option", { selected: c.chapter === cv }, c.chapter)));
-      count.textContent = `${r.rows.length} shown · ${r.total} in the bank`;
-      list.replaceChildren(r.rows.length ? h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Subject", "Chapter", "Type", "Level", "Question", "Answer"].map(x => h("th", {}, x)))),
+      const sv = subj.value, cv = chap.value, yv = yr.value;
+      yr.replaceChildren(h("option", { value: "" }, "Any year"), ...(r.facets.years || []).map(y => h("option", { value: y, selected: String(y) === yv }, y)));
+      subj.replaceChildren(h("option", { value: "" }, "All subjects"), ...r.facets.subjects.map(s => h("option", { selected: s === sv }, s)));
+      chap.replaceChildren(h("option", { value: "" }, "All chapters"), ...r.facets.chapters.filter(c => !sv || c.subject === sv).map(c => h("option", { selected: c.chapter === cv }, c.chapter)));
+      count.textContent = r.matching > r.rows.length ? `First ${r.rows.length} of ${r.matching} matching · ${r.total} in the bank` : `${r.rows.length} shown · ${r.total} in the bank`;
+      list.replaceChildren(r.rows.length ? h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Chapter", "Type", "Level", "Question", "Source", "Answer"].map(x => h("th", {}, x)))),
         h("tbody", {}, r.rows.map(x => h("tr", { tabindex: 0, onclick: () => (location.hash = `#/bank/${x.id}`), onkeydown: e => e.key === "Enter" && (location.hash = `#/bank/${x.id}`) },
-          h("td", { class: "mono" }, x.id), h("td", {}, x.subject), h("td", {}, x.chapter), h("td", {}, QT[x.qtype]), h("td", {}, x.difficulty),
-          h("td", { class: "wrap" }, (x.text || "").slice(0, 140) || (x.has_image ? "[image]" : "")), h("td", { class: "mono" }, x.answer))))))
+          h("td", { class: "mono" }, x.id), h("td", {}, x.chapter, h("div", { class: "small muted" }, x.subject)), h("td", {}, QT[x.qtype]), h("td", {}, x.difficulty),
+          h("td", { class: "wrap" }, (x.fmt === "html" ? plainText(x.text, 140) : (x.text || "").slice(0, 140)) || (x.has_image ? "[image]" : "")),
+          h("td", { class: "small" }, x.source || ""), h("td", { class: "mono" }, x.answer))))))
         : h("p", { class: "empty" }, r.total ? "No questions match these filters." : "The question bank is empty. Add the first question."));
     }
-    [subj, chap, typ, dif].forEach(s => (s.onchange = load));
+    [subj, chap, typ, dif, yr].forEach(s => (s.onchange = load));
     q.oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
       h("a", { class: "btn gold", href: "#/bank/new" }, "Add question")),
-      h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif, q), count, list));
+      packsCard(load),
+      h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif, yr, q), count, list));
     load();
   }, ["central"]);
+
+  // ready-made question sets that ship with the portal: one click adds them to the bank
+  function packsCard(reload) {
+    const box = h("div", { class: "card" }, h("h2", {}, "Ready-made question sets"), h("p", { class: "small muted", style: "margin:0" }, "Loading…"));
+    GET("/api/packs").then(packs => {
+      if (!packs.length) { box.remove(); return; }
+      box.replaceChildren(h("h2", {}, "Ready-made question sets"), ...packs.map(p => {
+        const done = p.loaded >= p.count;
+        const btn = h("button", { class: "btn gold", type: "button", hidden: done, onclick: async () => {
+          btn.disabled = true; btn.textContent = `Adding ${p.count - p.loaded} questions…`;
+          try { const r = await POST(`/api/packs/${p.id}/load`); toast(`Added ${r.added} questions`); box.replaceWith(packsCard(reload)); reload(); }
+          catch (x) { toast(x.message); btn.disabled = false; btn.textContent = "Try again"; }
+        } }, p.loaded ? `Add the remaining ${p.count - p.loaded}` : `Add all ${p.count} questions`);
+        return h("div", { class: "row", style: "align-items:center" }, h("div", {}, h("b", {}, p.name), h("div", { class: "small muted" }, p.note,
+          done ? ` All ${p.count} are in your bank.` : p.loaded ? ` ${p.loaded} of ${p.count} added.` : "")), done ? h("span", { class: "pill ok shrink" }, "Added") : btn);
+      }));
+    }).catch(() => box.remove());
+    return box;
+  }
 
   route(/^\/bank\/(new|\d+)$/, async (view, id) => {
     const isNew = id === "new";
@@ -475,10 +530,13 @@
       ansHint.textContent = qtype.value === "single" ? "One letter, e.g. B" : qtype.value === "multi" ? "Letters, e.g. AC" : "A number, e.g. 12 or 4.25, or a range 4.2:4.3";
     };
     qtype.onchange = sync;
-    show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))),
+    const preview = qd.fmt === "html" ? h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "How students see it"), qd.source ? h("span", { class: "pill navy" }, qd.source) : null),
+      richNode(qd.text), h("div", { class: "small" }, h("b", {}, "Answer: "), qd.answer),
+      qd.solution ? h("details", {}, h("summary", {}, "Solution"), richNode(qd.solution)) : null) : null;
+    show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))), preview,
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
-        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value };
+        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value, fmt: qd.fmt || "", source: qd.source || "" };
         try { if (isNew) { const r = await POST("/api/questions", body); toast("Question saved"); location.hash = `#/bank/${r.id}`; } else { await PUT(`/api/questions/${id}`, body); toast("Saved"); } }
         catch (x) { err.textContent = x.message; }
       } },
@@ -894,9 +952,9 @@
         h("td", {}, h("span", { class: "pill " + tone }, label)), h("td", { class: "num" }, d.marks))));
       qbox.replaceChildren(...list.filter(r => r.d.question).map(({ d, tone, label }) => h("div", { class: "qcard" },
         h("div", { class: "row" }, h("b", { class: "shrink" }, `Q${d.q}`), h("span", { class: "pill " + tone + " shrink" }, label), h("span", { class: "small muted" }, d.question.chapter || "")),
-        d.question.text ? h("div", { style: "white-space:pre-wrap" }, d.question.text) : null, d.question.image ? h("img", { src: d.question.image, alt: `Question ${d.q}` }) : null,
+        d.question.fmt === "html" ? richNode(d.question.text) : d.question.text ? h("div", { style: "white-space:pre-wrap" }, d.question.text) : null, d.question.image ? h("img", { src: d.question.image, alt: `Question ${d.q}` }) : null,
         d.question.options.length ? h("div", { class: "opts small" }, d.question.options.map((o, i) => o ? h("div", {}, `(${"ABCD"[i]}) ${o}`) : null)) : null,
-        h("div", { class: "small" }, `Your answer: ${d.marked || "—"} · Correct: ${d.key}`), d.question.solution ? h("details", {}, h("summary", {}, "Solution"), h("div", { style: "white-space:pre-wrap" }, d.question.solution)) : null)));
+        h("div", { class: "small" }, `Your answer: ${d.marked || "—"} · Correct: ${d.key}`), d.question.solution ? h("details", {}, h("summary", {}, "Solution"), d.question.fmt === "html" ? richNode(d.question.solution) : h("div", { style: "white-space:pre-wrap" }, d.question.solution)) : null)));
     };
     filter.onchange = draw;
     show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, rep.test.name), h("p", { class: "sub" }, `${rep.test.code} · ${fmtDate(rep.test.test_date)} · ${rep.test.sheet_title}`))),

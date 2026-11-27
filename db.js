@@ -28,7 +28,7 @@ const TABLES = [
   `questions (id {ID}, subject TEXT NOT NULL, chapter TEXT DEFAULT '', topic TEXT DEFAULT '',
      qtype TEXT NOT NULL, difficulty TEXT DEFAULT 'Medium', text TEXT DEFAULT '', image TEXT DEFAULT '', options TEXT DEFAULT '[]',
      answer TEXT NOT NULL DEFAULT '', solution TEXT DEFAULT '', created_by INTEGER, created_at TEXT DEFAULT {NOW},
-     fmt TEXT DEFAULT '', source TEXT DEFAULT '', ref TEXT DEFAULT '', year INTEGER)`,
+     fmt TEXT DEFAULT '', source TEXT DEFAULT '', ref TEXT DEFAULT '', year INTEGER, exam TEXT DEFAULT '')`,
   `tests (id {ID}, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, test_date TEXT DEFAULT '',
      sheet TEXT NOT NULL, answer_key TEXT DEFAULT '{}', published INTEGER NOT NULL DEFAULT 0, created_by INTEGER,
      created_at TEXT DEFAULT {NOW})`,
@@ -42,7 +42,7 @@ const TABLES = [
 ];
 const TABLE_NAMES = TABLES.map(t => t.split(" ")[0]);
 // columns added after the first release; older databases get them on start-up
-const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"]];
+const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"], ["questions", "exam", "TEXT DEFAULT ''"]];
 const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
 const PG_NOW = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')";
 

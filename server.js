@@ -299,6 +299,7 @@ app.post("/api/admins", auth, central, wrap(async req => {
 
 // ------------------------------------------------------------------ question bank
 const QTYPES = ["single", "multi", "integer", "decimal"];
+const QLEVELS = ["Basic", "Easy", "Medium", "Hard", "Very hard"];
 function cleanQuestion(b) {
   const qtype = QTYPES.includes(b.qtype) ? b.qtype : bad("Choose a question type.");
   let options = Array.isArray(b.options) ? b.options.map(o => str(o, 4000)) : [];
@@ -312,24 +313,54 @@ function cleanQuestion(b) {
   if (!str(b.text, 60000) && !image) bad("Add the question text or an image.");
   return {
     subject: str(b.subject, 40) || bad("Subject is needed."), chapter: str(b.chapter, 120), topic: str(b.topic, 120), qtype,
-    difficulty: ["Easy", "Medium", "Hard"].includes(b.difficulty) ? b.difficulty : "Medium",
+    difficulty: QLEVELS.includes(b.difficulty) ? b.difficulty : "Medium", exam: str(b.exam, 40),
     text: str(b.text, 60000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 60000),
     fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120),
   };
 }
-app.get("/api/questions", auth, admin, wrap(async req => {
+// filters: each of these may hold several values separated by "|" (e.g. chapter=Optics|Waves)
+function questionFilter(qy) {
   const where = ["1=1"], args = [];
-  for (const k of ["subject", "chapter", "qtype", "difficulty"]) if (req.query[k]) { where.push(`${k}=?`); args.push(str(req.query[k], 120)); }
-  if (req.query.year) { where.push("year=?"); args.push(Number(req.query.year) || 0); }
-  if (req.query.pyq === "1") where.push("source != ''");
-  if (req.query.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ? OR source LIKE ?)"); const l = `%${str(req.query.q, 60)}%`; args.push(l, l, l, l); }
-  const w = where.join(" AND ");
-  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image, answer, fmt, source, year
-                   FROM questions WHERE ${w} ORDER BY subject, chapter, year DESC, id LIMIT 300`, ...args);
+  const many = (k, col = k, num = false) => {
+    const vals = String(qy[k] || "").split("|").map(v => v.trim()).filter(Boolean).slice(0, 200);
+    if (!vals.length) return;
+    where.push(`${col} IN (${vals.map(() => "?").join(",")})`);
+    args.push(...vals.map(v => (num ? Number(v) || 0 : str(v, 120))));
+  };
+  many("subject"); many("chapter"); many("qtype"); many("difficulty"); many("exam"); many("year", "year", true);
+  if (qy.pyq === "1") where.push("source != ''");
+  if (qy.pyq === "0") where.push("(source = '' OR source IS NULL)");
+  if (qy.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ? OR source LIKE ?)"); const l = `%${str(qy.q, 60)}%`; args.push(l, l, l, l); }
+  return { w: where.join(" AND "), args };
+}
+app.get("/api/questions", auth, admin, wrap(async req => {
+  const { w, args } = questionFilter(req.query);
+  const limit = 100, offset = Math.max(0, Number(req.query.offset) || 0);
+  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image, answer, fmt, source, year, exam
+                   FROM questions WHERE ${w} ORDER BY subject, chapter, year DESC, id LIMIT ${limit} OFFSET ${offset}`, ...args);
   const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
                    chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
-                   years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year) };
-  return { rows, facets, matching: (await q1(`SELECT COUNT(*) AS n FROM questions WHERE ${w}`, ...args)).n, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };
+                   years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year),
+                   exams: (await qa("SELECT DISTINCT exam FROM questions WHERE exam != '' ORDER BY exam")).map(r => r.exam), levels: QLEVELS };
+  return { rows, facets, offset, limit, matching: (await q1(`SELECT COUNT(*) AS n FROM questions WHERE ${w}`, ...args)).n, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };
+}));
+// change level (or exam) for many questions at once: either the ticked ids, or everything matching the filters
+app.post("/api/questions/bulk", auth, central, wrap(async req => {
+  const set = req.body.set || {}, cols = [], vals = [];
+  if (set.difficulty != null) { QLEVELS.includes(set.difficulty) || bad("Unknown level."); cols.push("difficulty=?"); vals.push(set.difficulty); }
+  if (set.exam != null) { cols.push("exam=?"); vals.push(str(set.exam, 40)); }
+  if (!cols.length) bad("Nothing to change.");
+  if (Array.isArray(req.body.ids)) {
+    const ids = req.body.ids.map(Number).filter(Boolean).slice(0, 5000);
+    if (!ids.length) bad("Tick some questions first.");
+    let changes = 0;
+    await tx(async () => { for (let i = 0; i < ids.length; i += 500) { const part = ids.slice(i, i + 500);
+      changes += (await run(`UPDATE questions SET ${cols.join(", ")} WHERE id IN (${part.map(() => "?").join(",")})`, ...vals, ...part)).changes; } });
+    return { changed: changes };
+  }
+  const { w, args } = questionFilter(req.body.filter || {});
+  if (w === "1=1") bad("Choose a filter first, so the whole bank isn't changed by mistake.");
+  return { changed: (await run(`UPDATE questions SET ${cols.join(", ")} WHERE ${w}`, ...vals, ...args)).changes };
 }));
 app.get("/api/questions/:id", auth, admin, wrap(async req => {
   const q = await q1("SELECT * FROM questions WHERE id=?", req.params.id);
@@ -339,13 +370,13 @@ app.get("/api/questions/:id", auth, admin, wrap(async req => {
 }));
 app.post("/api/questions", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source) };
+  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, exam)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source, q.exam) };
 }));
 app.put("/api/questions/:id", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=? WHERE id=?`,
-    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, req.params.id);
+  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=?, exam=? WHERE id=?`,
+    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, q.exam, req.params.id);
   return { ok: true };
 }));
 app.delete("/api/questions/:id", auth, central, wrap(async req => {
@@ -354,8 +385,12 @@ app.delete("/api/questions/:id", auth, central, wrap(async req => {
 }));
 
 // ------------------------------------------------------------------ ready-made question sets shipped with the app (bank/*.json.gz)
-const PACKS = { "jee-main-pyq-physics": { prefix: "jmp:", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
-  note: "AIEEE 2002 to JEE Main 2026, chapter-wise, with solutions and figures." } };
+const PACKS = {
+  "jee-main-pyq-physics": { prefix: "jmp:", exam: "JEE Main", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
+    note: "AIEEE 2002 to JEE Main 2026, chapter-wise, with solutions and figures." },
+  "jee-adv-physics": { prefix: "jap:", exam: "JEE Advanced", file: "jee-adv-physics.json.gz", name: "JEE Advanced questions · Physics",
+    note: "Single, multiple-correct, numerical and paragraph questions, chapter-wise, with solutions and figures." },
+};
 const packData = id => JSON.parse(require("zlib").gunzipSync(fs.readFileSync(path.join(__dirname, "bank", PACKS[id].file))).toString("utf8"));
 app.get("/api/packs", auth, central, wrap(async () => {
   const out = [];
@@ -369,13 +404,15 @@ app.post("/api/packs/:id/load", auth, central, wrap(async req => {
   const p = PACKS[req.params.id] || bad("Unknown question set.");
   const have = new Set((await qa("SELECT ref FROM questions WHERE ref LIKE ?", p.prefix + "%")).map(r => r.ref));
   const todo = packData(req.params.id).questions.filter(q => !have.has(p.prefix + q.ref) && QTYPES.includes(q.qtype));
-  const COLS = ["subject", "chapter", "topic", "qtype", "difficulty", "text", "image", "options", "answer", "solution", "created_by", "fmt", "source", "ref", "year"];
+  const COLS = ["subject", "chapter", "topic", "qtype", "difficulty", "text", "image", "options", "answer", "solution", "created_by", "fmt", "source", "ref", "year", "exam"];
   await tx(async () => {
     for (let i = 0; i < todo.length; i += 150) {
       const chunk = todo.slice(i, i + 150), args = [];
-      for (const q of chunk) args.push(q.subject, q.chapter, q.topic || "", q.qtype, q.difficulty, q.text, "", "[]", q.answer, q.solution || "", req.user.id, "html", q.source || "", p.prefix + q.ref, q.year || null);
+      for (const q of chunk) args.push(q.subject, q.chapter, q.topic || "", q.qtype, QLEVELS.includes(q.difficulty) ? q.difficulty : "Medium", q.text, "", "[]", q.answer, q.solution || "", req.user.id, "html", q.source || "", p.prefix + q.ref, q.year || null, q.exam || p.exam);
       await run(`INSERT INTO questions (${COLS.join(", ")}) VALUES ${chunk.map(() => "(" + COLS.map(() => "?").join(",") + ")").join(",")}`, ...args);
     }
+    // questions added before the Exam field existed get it now
+    await run("UPDATE questions SET exam=? WHERE ref LIKE ? AND (exam = '' OR exam IS NULL)", p.exam, p.prefix + "%");
   });
   return { added: todo.length, total: have.size + todo.length };
 }));

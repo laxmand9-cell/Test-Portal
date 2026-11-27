@@ -1,11 +1,10 @@
 # Render Blueprint: in Render choose New > Blueprint and pick this repository.
-# Free plan + a free Neon PostgreSQL database (DATABASE_URL), so data is kept.
-# Later, to stop the site sleeping, change plan to "starter" ($7/month); the data stays in Neon.
+# Starter plan ($7/month) + a free Neon PostgreSQL database (DATABASE_URL), so data is kept.
 services:
   - type: web
     name: test-portal
     runtime: node
-    plan: free
+    plan: starter            # $7/month: no sleeping. Data lives in Neon (DATABASE_URL)
     region: singapore        # pick Neon's Singapore region too, so they are close
     branch: main
     buildCommand: npm install

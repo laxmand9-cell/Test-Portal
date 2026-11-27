@@ -352,3 +352,6 @@ body.login-mode .login label.f { color: #5b6450; font-weight: 600; }
 .login-btn:hover { background: #a9c63a !important; }
 body.login-mode .login .err { color: #b3261e; }
 body.login-mode .card.login + .card { background: #fff; color: #1d2410; }
+
+.dup-group { display: grid; gap: 8px; border: 2px solid var(--line); border-radius: var(--r); padding: 10px; }
+.dup-group h3 { margin: 0; }

@@ -370,6 +370,44 @@ app.post("/api/questions/bulk", auth, central, wrap(async req => {
   if (w === "1=1") bad("Choose a filter first, so the whole bank isn't changed by mistake.");
   return { changed: (await run(`UPDATE questions SET ${cols.join(", ")} WHERE ${w}`, ...vals, ...args)).changes };
 }));
+// duplicate finder: same or nearly the same question text (maths, spacing and HTML ignored)
+function qWords(html) {
+  return String(html || "").replace(/<img[^>]*>/g, " fig ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ")
+    .replace(/\\[a-zA-Z]+/g, " ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+}
+app.get("/api/questions/duplicates", auth, central, wrap(async req => {
+  const min = Math.min(1, Math.max(0.6, Number(req.query.min) || 0.8));
+  const rows = await qa("SELECT id, text, subject FROM questions");
+  const words = rows.map(r => qWords(r.text));
+  const grams = words.map(w => { const g = new Set(); for (let i = 0; i + 2 < w.length; i++) g.add(w[i] + " " + w[i + 1] + " " + w[i + 2]); if (!g.size && w.length) g.add(w.join(" ")); return g; });
+  // candidates: questions sharing a rare 4-word run
+  const buckets = new Map();
+  words.forEach((w, i) => { const seen = new Set(); for (let k = 0; k + 3 < w.length; k++) { const g = w.slice(k, k + 4).join(" "); if (seen.has(g)) continue; seen.add(g);
+    let b = buckets.get(g); if (!b) buckets.set(g, (b = [])); if (b.length < 40) b.push(i); } if (w.length && w.length < 4) { const g = "#" + w.join(" "); const b = buckets.get(g) || []; b.push(i); buckets.set(g, b); } });
+  const parent = rows.map((_, i) => i), find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const score = new Map(), tried = new Set();
+  for (const b of buckets.values()) {
+    if (b.length < 2 || b.length >= 40) continue;
+    for (let x = 0; x < b.length; x++) for (let y = x + 1; y < b.length; y++) {
+      const a = b[x], c = b[y], key = a * 1e6 + c;
+      if (tried.has(key)) continue; tried.add(key);
+      if (rows[a].subject.toLowerCase() !== rows[c].subject.toLowerCase()) continue;
+      const A = grams[a], C = grams[c]; let same = 0; for (const g of A) if (C.has(g)) same++;
+      const j = same / (A.size + C.size - same || 1);
+      if (j >= min) { parent[find(a)] = find(c); score.set(key, j); }
+    }
+  }
+  const groups = new Map();
+  rows.forEach((r, i) => { const p = find(i); if (!groups.has(p)) groups.set(p, []); groups.get(p).push(i); });
+  const out = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    let best = 0; for (let x = 0; x < g.length; x++) for (let y = x + 1; y < g.length; y++) { const a = Math.min(g[x], g[y]), c = Math.max(g[x], g[y]); best = Math.max(best, score.get(a * 1e6 + c) || 0); }
+    out.push({ similarity: Math.round(best * 100), ids: g.map(i => rows[i].id) });
+  }
+  out.sort((a, b) => b.similarity - a.similarity);
+  return { groups: out.slice(0, 200), total: out.length, checked: rows.length };
+}));
 app.get("/api/questions/:id", auth, admin, wrap(async req => {
   const q = await q1("SELECT * FROM questions WHERE id=?", req.params.id);
   if (!q) throw new HttpError(404, "Not found");

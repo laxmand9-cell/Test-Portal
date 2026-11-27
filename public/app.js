@@ -498,12 +498,35 @@
     [subj, chap, exam, typ, dif, yr, pyq, size].forEach(s => (s.onchange = () => load(false)));
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => load(false), 300); };
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
-      h("a", { class: "btn gold", href: "#/bank/new" }, "Add question")),
+      h("div", { class: "row" }, h("button", { class: "btn ghost", type: "button", onclick: () => findDuplicates(() => load(true)) }, "Find duplicates"),
+        h("a", { class: "btn gold", href: "#/bank/new" }, "Add question"))),
       packsCard(() => load(false)),
       h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif), h("div", { class: "row" }, exam, yr, pyq, q),
         h("div", { class: "row", style: "align-items:center" }, count, h("span", { class: "shrink" }, size)), pagerTop, list, pager));
     load(false);
   }, ["central"]);
+
+  // groups of identical / nearly identical questions, side by side, with delete
+  function findDuplicates(after) {
+    const box = h("div", { class: "picker" }), list = h("div", { class: "qlist" }), info = h("p", { class: "small muted", style: "margin:0" }, "Checking every question…");
+    async function load() {
+      let r; try { r = await GET("/api/questions/duplicates"); } catch (x) { info.textContent = x.message; return; }
+      info.textContent = r.total ? `${r.total} group${r.total === 1 ? "" : "s"} of matching questions among ${r.checked}. Questions that are at least 80% the same are shown together. Keep one and delete the others. (NTA sometimes repeats a question in a later year; those are real repeats you may want to keep.)`
+        : `No duplicates found among ${r.checked} questions.`;
+      const all = await Promise.all(r.groups.slice(0, 30).map(g => Promise.all(g.ids.map(id => GET(`/api/questions/${id}`).catch(() => null)))));
+      show(list, r.groups.slice(0, 30).map((g, gi) => h("div", { class: "dup-group" },
+        h("h3", {}, `Group ${gi + 1} · ${g.similarity >= 100 ? "identical" : g.similarity + "% the same"}`),
+        all[gi].filter(Boolean).map((q, k) => questionCard(q, "ABCDEFGH"[k] || k + 1, [], x => [
+          h("a", { class: "btn ghost small", href: `#/bank/${x.id}`, onclick: () => $("#modal").hidden = true }, "Edit"),
+          h("button", { class: "btn danger small", type: "button", onclick: async e => {
+            e.target.disabled = true;
+            try { await DEL(`/api/questions/${x.id}`); toast(`Question ${x.id} deleted`); load(); after(); } catch (err) { toast(err.message); e.target.disabled = false; }
+          } }, "Delete")])))));
+      if (r.total > 30) list.append(h("p", { class: "small muted" }, `Showing the first 30 groups. Delete some and press Find duplicates again to see the rest.`));
+    }
+    wideModal((b, close) => { b.append(box); show(box, h("div", { class: "qv-head" }, h("b", {}, "Duplicate questions"), h("span", { class: "small" }),
+      h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: close }, "✕")), info, list); load(); });
+  }
 
   // one question shown in full in the bank list
   function questionCard(x, no, ids, actions) {

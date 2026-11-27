@@ -492,7 +492,7 @@
     const allBox = h("input", { type: "checkbox", "aria-label": "Tick all shown", onchange: e => { tbody.querySelectorAll("input[type=checkbox]").forEach(c => { c.checked = e.target.checked; c.checked ? ticked.add(+c.value) : ticked.delete(+c.value); }); syncBulk(); } });
     const tableBox = h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, allBox), ["#", "Chapter", "Type", "Level", "Question", "Exam / source", "Answer"].map(x => h("th", {}, x)))), tbody));
     const empty = h("p", { class: "empty" });
-    const ticked = new Set();
+    const ticked = new Set(), listIds = [];
     let offset = 0, matching = 0, facetsDone = false, query = "";
     // bulk change bar
     const lvl = h("select", { id: "bulk-level", "aria-label": "New level" }, QLEVELS.map(l => h("option", {}, l)));
@@ -534,8 +534,10 @@
         ...[h("span", { class: "mono" }, x.id), [x.chapter, h("div", { class: "small muted" }, x.subject)], QT[x.qtype], h("span", { class: "pill lv" + (QLEVELS.indexOf(x.difficulty) + 1) }, x.difficulty),
           (x.fmt === "html" ? plainText(x.text, 140) : (x.text || "").slice(0, 140)) || (x.has_image ? "[image]" : ""),
           [x.exam ? h("div", {}, x.exam) : null, x.source && x.source !== x.exam ? h("div", { class: "small muted" }, x.source) : null], h("span", { class: "mono" }, x.answer)]
-          .map((c, i) => h("td", { class: i === 4 ? "wrap" : "", tabindex: i === 0 ? 0 : null, style: "cursor:pointer", onclick: () => (location.hash = `#/bank/${x.id}`), onkeydown: e => e.key === "Enter" && (location.hash = `#/bank/${x.id}`) }, c))));
+          .map((c, i) => h("td", { class: i === 4 ? "wrap" : "", tabindex: i === 0 ? 0 : null, style: "cursor:pointer", onclick: () => viewQuestion(x.id, listIds), onkeydown: e => e.key === "Enter" && viewQuestion(x.id, listIds) }, c))));
       if (append) tbody.append(...rows); else tbody.replaceChildren(...rows);
+      if (!append) listIds.length = 0;
+      listIds.push(...r.rows.map(x => x.id));
       const shown = tbody.children.length;
       count.textContent = `${matching} matching · ${r.total} in the bank${matching > shown ? ` · showing ${shown}` : ""}`;
       more.hidden = matching <= shown;
@@ -551,6 +553,48 @@
       h("div", { class: "card" }, h("div", { class: "filters" }, pick.exam, pick.chapter, pick.qtype, pick.difficulty, pick.year, pyq, q, clearAll), count, bulkBar, tableBox, empty, h("div", {}, more)));
     load(false);
   }, ["central"]);
+
+  // read-only pop-up of a bank question; Edit opens the edit screen; arrows step through the list
+  function viewQuestion(id, ids) {
+    let cur = id, closeFn = null;
+    const keys = e => {
+      if ($("#modal").hidden) { document.removeEventListener("keydown", keys); return; }
+      if (e.key === "Escape") closeFn();
+      else if (e.key === "ArrowRight") step(1); else if (e.key === "ArrowLeft") step(-1);
+    };
+    const step = d => { const i = ids.indexOf(cur) + d; if (i >= 0 && i < ids.length) { cur = ids[i]; draw(); } };
+    let bodyEl;
+    async function draw() {
+      const box = h("div", { class: "qview" }, h("p", { class: "muted small" }, "Loading…"));
+      bodyEl.replaceChildren(box);
+      let q; try { q = await GET(`/api/questions/${cur}`); } catch (x) { box.replaceChildren(h("p", { class: "err" }, x.message)); return; }
+      if (cur !== q.id) return;
+      const i = ids.indexOf(cur);
+      const mc = q.qtype === "single" || q.qtype === "multi";
+      show(box,
+        h("div", { class: "qv-head" }, h("b", {}, `Question ${q.id}`),
+          h("span", { class: "small muted" }, i >= 0 ? `${i + 1} of ${ids.length}` : ""),
+          h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: () => closeFn() }, "✕")),
+        h("div", { class: "chips" }, [q.exam, q.chapter, q.topic, QT[q.qtype]].filter(Boolean).map(t => h("span", { class: "chip" }, t)),
+          h("span", { class: "pill lv" + (QLEVELS.indexOf(q.difficulty) + 1) }, q.difficulty), q.source ? h("span", { class: "pill navy" }, q.source) : null),
+        q.fmt === "html" ? richNode(q.text) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null,
+        q.image ? h("img", { src: q.image, alt: `Question ${q.id}`, style: "max-width:100%;border-radius:4px" }) : null,
+        mc && q.options && q.options.some(Boolean) ? h("div", { class: "opts" }, q.options.map((o, k) => o ? h("div", {}, `(${"ABCD"[k]}) ${o}`) : null)) : null,
+        h("div", { class: "qv-ans" }, "Answer: ", h("b", { class: "mono" }, q.answer)),
+        q.solution ? h("details", {}, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : null,
+        h("div", { class: "qv-foot" },
+          h("button", { class: "btn ghost small", type: "button", disabled: i <= 0, onclick: () => step(-1) }, "‹ Previous"),
+          h("button", { class: "btn ghost small", type: "button", disabled: i < 0 || i >= ids.length - 1, onclick: () => step(1) }, "Next ›"),
+          h("span", { style: "flex:1" }),
+          h("button", { class: "btn small", type: "button", onclick: () => { closeFn(); location.hash = `#/bank/${q.id}`; } }, "Edit")));
+      bodyEl.parentElement.scrollTop = 0;
+    }
+    closeFn = modal((b, close) => { bodyEl = b; closeFn = close; draw(); });
+    $("#modal .modal-card").classList.add("wide");
+    const m = $("#modal"), obs = new MutationObserver(() => { if (m.hidden) { $("#modal .modal-card").classList.remove("wide"); document.removeEventListener("keydown", keys); obs.disconnect(); } });
+    obs.observe(m, { attributes: true, attributeFilter: ["hidden"] });
+    document.addEventListener("keydown", keys);
+  }
 
   // ready-made question sets that ship with the portal: one click adds them to the bank
   function packsCard(reload) {

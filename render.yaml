@@ -1,0 +1,23 @@
+# Render Blueprint: in Render choose New > Blueprint and pick this repository.
+# It creates the live portal with a disk, so data is kept across restarts.
+services:
+  - type: web
+    name: test-portal
+    runtime: node
+    plan: starter            # $7/month; disks need a paid plan
+    region: singapore        # closest Render region to India
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: ADMIN_USER          # Render asks you to type these once
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

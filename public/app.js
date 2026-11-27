@@ -122,6 +122,8 @@
       h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hello, ${me.name || me.username}`),
         h("p", { class: "sub" }, me.role === "central" ? "You can see every zone, campus and batch." : me.role === "zone" ? `You can see all campuses in ${me.zone} zone.` : `You can see ${me.campus} campus.`)),
         me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null),
+      o.temporary_storage ? h("div", { class: "card", style: "border-left:4px solid var(--bad)" }, h("h2", { class: "err" }, "Data is not being kept"),
+        h("p", {}, "This site has no disk attached, so every student, test and mark is erased when the server restarts or updates. Fine for trying things out; attach a disk before adding real data.")) : null,
       h("div", { class: "stats" },
         o.zones != null ? h("div", { class: "stat" }, h("b", {}, o.zones), h("span", {}, "Zones")) : null,
         h("div", { class: "stat" }, h("b", {}, o.campuses), h("span", {}, "Campuses")),

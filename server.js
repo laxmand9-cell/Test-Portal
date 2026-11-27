@@ -13,8 +13,21 @@ const { DatabaseSync } = require("node:sqlite");
 const OMR = require("./public/vendor/omr_core.js");
 
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
-fs.mkdirSync(DATA_DIR, { recursive: true });
+// Where the database lives. On Render this must be the mounted disk (DATA_DIR=/var/data).
+// If that folder can't be written (no disk attached), start anyway in a local folder and warn:
+// the portal works, but everything is lost on the next restart or deploy.
+let DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+let TEMP_STORAGE = !process.env.DATA_DIR && !!process.env.RENDER;
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.accessSync(DATA_DIR, fs.constants.W_OK);
+} catch (e) {
+  const fallback = path.join(__dirname, "data");
+  console.warn(`WARNING: cannot write to ${DATA_DIR} (${e.code}). No disk attached? Using ${fallback} instead. DATA WILL BE LOST on every restart or deploy.`);
+  DATA_DIR = fallback;
+  TEMP_STORAGE = true;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 const db = new DatabaseSync(path.join(DATA_DIR, "portal.db"));
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
 
@@ -590,9 +603,11 @@ app.get("/api/my/tests/:id", auth, wrap(req => {
 }));
 
 // ------------------------------------------------------------------ dashboard counts
+app.get("/api/health", (req, res) => res.json({ ok: true }));
 app.get("/api/overview", auth, admin, wrap(req => {
   const scope = campusScope(req.user);
   return {
+    temporary_storage: req.user.role === "central" && TEMP_STORAGE,
     zones: req.user.role === "central" ? q1("SELECT COUNT(*) AS n FROM zones").n : null,
     campuses: q1(`SELECT COUNT(*) AS n FROM campuses WHERE ${inList("id", scope)}`).n,
     batches: q1(`SELECT COUNT(*) AS n FROM batches WHERE ${inList("campus_id", scope)}`).n,

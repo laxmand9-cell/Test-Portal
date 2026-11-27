@@ -43,17 +43,17 @@ Settings (environment variables):
 | `DATA_DIR` | Folder for the database file | `./data` |
 | `ADMIN_USER`, `ADMIN_PASSWORD` | First central admin, created only when none exists | admin / change-me-now |
 
-## Putting it online (cloud)
+## Putting it online (Render)
 
-Any host that runs Node.js and keeps a disk works. For example, on Render:
+This repository includes `render.yaml`, so Render fills in every setting itself.
 
-1. Put this folder in a GitHub repository.
-2. On Render, create a **Web Service** from that repository.
-   - Build command: `npm install`
-   - Start command: `npm start`
-3. Add a **Persistent Disk** mounted at `/var/data`, and set `DATA_DIR=/var/data`. Without a disk, data is lost on every restart.
-4. Set `ADMIN_USER` and `ADMIN_PASSWORD`. Use a strong password.
-5. Optionally, add your own domain.
+1. On render.com choose **New > Blueprint** and pick this repository.
+2. When asked, type `ADMIN_USER` and `ADMIN_PASSWORD`. These are the first central-team login.
+3. Click **Apply**. Render creates the service with a 1 GB disk at `/var/data` on the Starter plan ($7/month + $0.25/GB).
+
+The portal needs a disk to keep data. Without one (for example on the free plan) it still starts, but it shows the central team a red warning, and everything is erased on every restart or update.
+
+Every push to the `main` branch updates the live site automatically.
 
 To move to your own server later, copy the folder and the `portal.db` file, run `npm install`, then `npm start` behind a web server with HTTPS (nginx or Caddy).
 

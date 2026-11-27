@@ -328,9 +328,11 @@ function questionFilter(qy) {
     const vals = String(qy[k] || "").split("|").map(v => v.trim()).filter(Boolean).slice(0, 200);
     if (!vals.length) return;
     where.push(`${col} IN (${vals.map(() => "?").join(",")})`);
-    args.push(...vals.map(v => (num ? Number(v) || 0 : str(v, 120))));
+    args.push(...vals.map(v => (num ? Number(v) || 0 : col.startsWith("lower(") ? str(v, 120).toLowerCase() : str(v, 120))));
   };
-  many("subject"); many("chapter"); many("qtype"); many("difficulty"); many("exam"); many("year", "year", true);
+  many("subject", "lower(subject)"); many("chapter"); many("qtype"); many("difficulty"); many("exam"); many("year", "year", true);
+  const ex = String(qy.exclude || "").split(",").map(Number).filter(Boolean).slice(0, 500);
+  if (ex.length) { where.push(`id NOT IN (${ex.map(() => "?").join(",")})`); args.push(...ex); }
   if (qy.pyq === "1") where.push("source != ''");
   if (qy.pyq === "0") where.push("(source = '' OR source IS NULL)");
   if (qy.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ? OR source LIKE ?)"); const l = `%${str(qy.q, 60)}%`; args.push(l, l, l, l); }
@@ -342,7 +344,7 @@ app.get("/api/questions", auth, admin, wrap(async req => {
   const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), full ? 50 : 300), offset = Math.max(0, Number(req.query.offset) || 0);
   const cols = full ? "text, solution, image, options" : "substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image";
   const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, ${cols}, answer, fmt, source, year, exam
-                   FROM questions WHERE ${w} ORDER BY subject, chapter, year DESC, id LIMIT ${limit} OFFSET ${offset}`, ...args);
+                   FROM questions WHERE ${w} ORDER BY ${req.query.order === "random" ? "RANDOM()" : "subject, chapter, year DESC, id"} LIMIT ${limit} OFFSET ${offset}`, ...args);
   if (full) rows.forEach(r => (r.options = JSON.parse(r.options || "[]")));
   const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
                    chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
@@ -499,8 +501,10 @@ app.put("/api/tests/:id/questions", auth, central, wrap(async req => {
   const layout = layoutOf(t), idx = OMR.questionIndex(layout);
   const links = req.body.links || {}; // {qno: question_id}
   return tx(async () => {
+    const before = (await qa("SELECT qno FROM test_questions WHERE test_id=?", t.id)).map(r => r.qno);
     await run("DELETE FROM test_questions WHERE test_id=?", t.id);
     const key = JSON.parse(t.answer_key || "{}");
+    for (const qno of before) if (!(qno in links)) delete key[qno]; // a removed question takes its answer with it
     for (const [k, v] of Object.entries(links)) {
       const qno = Number(k), qid = Number(v);
       const slot = idx.find(x => x.qno === qno);
@@ -508,6 +512,7 @@ app.put("/api/tests/:id/questions", auth, central, wrap(async req => {
       if (!slot || !q) continue;
       const wantNum = slot.sec.qtype === "integer" || slot.sec.qtype === "decimal", isNum = q.qtype === "integer" || q.qtype === "decimal";
       if (wantNum !== isNum) bad(`Q${qno} needs a ${wantNum ? "numerical" : "multiple-choice"} question.`);
+      if (slot.sec.qtype === "single" && q.qtype === "multi") bad(`Q${qno} is single-correct, but question ${qid} has more than one correct option.`);
       await run("INSERT INTO test_questions (test_id, qno, question_id) VALUES (?,?,?)", t.id, qno, qid);
       key[qno] = slot.sec.options === "1234" && /^[A-D]$/.test(q.answer) ? String("ABCD".indexOf(q.answer) + 1) : q.answer;
     }

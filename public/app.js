@@ -500,7 +500,7 @@
   }, ["central"]);
 
   // one question shown in full in the bank list
-  function questionCard(x, no, ids) {
+  function questionCard(x, no, ids, actions) {
     const sol = x.solution ? h("details", { class: "qc-sol" }, h("summary", {}, "Solution")) : null;
     if (sol) sol.addEventListener("toggle", () => { if (sol.open && sol.children.length === 1) sol.append(x.fmt === "html" ? richNode(x.solution) : h("div", { style: "white-space:pre-wrap" }, x.solution)); });
     const mc = x.qtype === "single" || x.qtype === "multi";
@@ -513,8 +513,8 @@
       mc && x.options && x.options.some(Boolean) ? h("div", { class: "opts" }, x.options.map((o, k) => o ? h("div", {}, `(${"ABCD"[k]}) ${o}`) : null)) : null,
       h("div", { class: "qc-foot" }, h("span", {}, "Answer: ", h("b", { class: "mono" }, x.answer)), sol,
         h("span", { class: "small muted" }, `ID ${x.id}`), h("span", { style: "flex:1" }),
-        h("button", { class: "btn ghost small", type: "button", onclick: () => viewQuestion(x.id, ids) }, "View"),
-        h("a", { class: "btn small", href: `#/bank/${x.id}` }, "Edit")));
+        actions ? actions(x) : [h("button", { class: "btn ghost small", type: "button", onclick: () => viewQuestion(x.id, ids) }, "View"),
+          h("a", { class: "btn small", href: `#/bank/${x.id}` }, "Edit")]));
   }
 
   // read-only pop-up of a bank question; Edit opens the edit screen; arrows step through the list
@@ -661,7 +661,7 @@
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
         const body = { code: code.value, name: name.value, test_date: date.value, sheet: sheet.value, batch_ids: [...chosen] };
-        try { const r = isNew ? await POST("/api/tests", body) : await PUT(`/api/tests/${id}`, body); location.hash = `#/tests/${isNew ? r.id : id}`; }
+        try { const r = isNew ? await POST("/api/tests", body) : await PUT(`/api/tests/${id}`, body); location.hash = isNew ? `#/tests/${r.id}/questions` : `#/tests/${id}`; }
         catch (x) { err.textContent = x.message; }
       } }, h("div", { class: "row" }, field("Test code", code, "Short, printed in the QR of every sheet"), field("Test name", name), field("Date", date)),
         field("OMR sheet type", sheet, "Sets the question pattern and marking scheme."),
@@ -670,12 +670,12 @@
           !isNew ? h("button", { class: "btn danger", type: "button", onclick: () => confirmBox("Delete this test and all its results?", "Delete", async () => { await DEL(`/api/tests/${id}`); location.hash = "#/tests"; }) }, "Delete test") : null)));
   }, ["central"]);
 
-  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results))?$/, async (view, id, tab = "results") => {
+  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions))?$/, async (view, id, tab = "results") => {
     await structure();
     const t = await GET(`/api/tests/${id}`);
     const layout = O.getLayout(t.sheet);
     const central = state.me.role === "central";
-    const tabs = [["results", "Results"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["key", "Answer key"]] : [])];
+    const tabs = [["results", "Results"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
     const body = h("div", { style: "display:grid;gap:16px" });
     show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
@@ -684,6 +684,7 @@
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
       h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
+    if (tab === "questions" && central) return questionsTab(body, t, layout);
     if (tab === "sheets") return sheetsTab(body, t, layout);
     if (tab === "scans") return scansTab(body, t, layout);
     return resultsTab(body, t, layout);
@@ -712,20 +713,131 @@
         try { const r = await PUT(`/api/tests/${t.id}/key`, { key }); msg.textContent = `Saved · ${r.count} of ${idx.length} answers`; toast("Answer key saved"); } catch (x) { toast(x.message); }
       } }, "Save answer key"), msg)),
       h("div", { class: "card" }, h("h2", {}, "Publish"), h("p", { class: "small" }, "Students see their marks, ranks and question-wise review only after you publish. You can keep reading more sheets after publishing; new results appear straight away."), h("div", {}, pub)),
-      await linkCard(t, layout));
+      h("div", { class: "card" }, h("p", { class: "small", style: "margin:0" }, `${t.linked.length} of ${idx.length} questions are picked from the question bank; their answers are filled in above automatically. `,
+        h("a", { href: `#/tests/${t.id}/questions` }, "Pick questions"))));
   }
-  async function linkCard(t, layout) {
-    const links = Object.fromEntries(t.linked.map(l => [l.qno, l.id]));
-    const box = h("div", { style: "display:grid;gap:8px" });
-    const ids = h("textarea", { id: "link-ids", rows: 3, class: "mono", placeholder: "One per line: question number, bank question id\n1,104\n2,87" },
-      Object.entries(links).map(([q, i]) => `${q},${i}`).join("\n"));
-    box.append(h("h2", {}, "Questions from the bank (optional)"),
-      h("p", { class: "small" }, "Link bank questions to question numbers so students can see the question and solution in their review. Their answers fill the key automatically. Find ids in the Question bank."),
-      ids, h("div", {}, h("button", { class: "btn ghost", type: "button", onclick: async () => {
-        const map = {}; ids.value.split(/\r?\n/).forEach(l => { const [q, i] = l.split(/[,\s]+/); if (+q && +i) map[+q] = +i; });
-        try { await PUT(`/api/tests/${t.id}/questions`, { links: map }); toast("Linked"); render(); } catch (x) { toast(x.message); }
-      } }, "Save links")));
-    return h("div", { class: "card" }, box);
+  // ---- questions: pick from the bank, section by section
+  const SEC_QTYPE = { single: "single", multi: "multi", integer: "integer", decimal: "decimal|integer" };
+  const titleCase = s => s.charAt(0) + s.slice(1).toLowerCase();
+  function wideModal(build) {
+    const close = modal(build);
+    const card = $("#modal .modal-card"), m = $("#modal");
+    card.classList.add("wide");
+    const obs = new MutationObserver(() => { if (m.hidden) { card.classList.remove("wide"); obs.disconnect(); } });
+    obs.observe(m, { attributes: true, attributeFilter: ["hidden"] });
+    return close;
+  }
+  async function questionsTab(body, t, layout) {
+    const idx = O.questionIndex(layout);
+    let links = {}, info = {};
+    const setLinked = linked => { links = {}; info = {}; linked.forEach(l => { links[l.qno] = l.id; info[l.id] = l; }); };
+    setLinked(t.linked);
+    const secs = layout.sections.map((sec, si) => ({ sec, si, qnos: idx.filter(x => x.si === si).map(x => x.qno) }));
+    const summary = h("div", { class: "card" }), wrap = h("div", { style: "display:grid;gap:16px" });
+    async function save(next) {
+      await PUT(`/api/tests/${t.id}/questions`, { links: next });
+      const fresh = await GET(`/api/tests/${t.id}`); t.linked = fresh.linked; t.answer_key = fresh.answer_key; setLinked(fresh.linked);
+      draw();
+    }
+    const used = () => Object.values(links);
+    function draw() {
+      const n = Object.keys(links).length;
+      show(summary, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Questions for this test"),
+        h("p", { class: "small muted", style: "margin:0" }, "Pick questions for each section from the question bank. Their answers go into the answer key automatically, and students see each question with its solution in their results.")),
+        h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`)));
+      show(wrap, secs.map(s => sectionCard(s)));
+    }
+    function sectionCard(s) {
+      const picked = s.qnos.filter(q => links[q]).length;
+      const rows = [];
+      let gap = [];
+      const flush = () => { if (gap.length) { rows.push(h("div", { class: "slot empty" }, gap.length === 1 ? `Q${gap[0]} not picked yet` : `Q${gap[0]}–Q${gap[gap.length - 1]} not picked yet`)); gap = []; } };
+      for (const qno of s.qnos) {
+        const id = links[qno];
+        if (!id) { gap.push(qno); continue; }
+        flush();
+        const q = info[id] || {};
+        rows.push(h("div", { class: "slot" }, h("b", { class: "mono" }, `Q${qno}`),
+          h("div", { class: "slot-main" }, h("div", { class: "slot-text" }, q.fmt === "html" ? plainText(q.text, 150) : (q.text || "").slice(0, 150)), h("div", { class: "small muted" }, [q.chapter, `Answer ${q.answer}`, `ID ${id}`].filter(Boolean).join(" · "))),
+          h("button", { class: "btn ghost small shrink", type: "button", onclick: () => viewQuestion(id, s.qnos.map(x => links[x]).filter(Boolean)) }, "View"),
+          h("button", { class: "btn danger small shrink", type: "button", onclick: async () => { const next = { ...links }; delete next[qno]; try { await save(next); toast(`Removed from Q${qno}`); } catch (x) { toast(x.message); } } }, "Remove")));
+      }
+      flush();
+      const full = picked === s.qnos.length;
+      return h("div", { class: "card" },
+        h("div", { class: "head" }, h("div", {}, h("h2", {}, s.sec.name), h("p", { class: "small muted", style: "margin:0" }, `Q${s.qnos[0]}–Q${s.qnos[s.qnos.length - 1]} · ${picked} of ${s.qnos.length} picked`)),
+          h("div", { class: "row" }, picked ? h("button", { class: "btn ghost small", type: "button", onclick: () => confirmBox(`Remove all ${picked} questions from ${s.sec.name}?`, "Remove all", async () => {
+            const next = { ...links }; s.qnos.forEach(q => delete next[q]); try { await save(next); } catch (x) { toast(x.message); } }) }, "Clear section") : null,
+            h("button", { class: "btn gold small", type: "button", disabled: full, onclick: () => picker(s) }, full ? "Section full" : "Pick from bank"))),
+        h("div", { class: "slots" }, rows));
+    }
+    // the bank, filtered to this section's subject and question type, with Add buttons
+    function picker(s) {
+      const subject = s.sec.subject.toLowerCase(), qtype = SEC_QTYPE[s.sec.qtype];
+      const chap = h("select", { "aria-label": "Chapter", id: "pk-chapter" }), yr = h("select", { "aria-label": "Year", id: "pk-year" });
+      const dif = h("select", { "aria-label": "Level", id: "pk-level" }, h("option", { value: "" }, "Any level"), QLEVELS.map(d => h("option", {}, d)));
+      const pyq = h("select", { "aria-label": "Past-year questions", id: "pk-pyq" }, h("option", { value: "" }, "All questions"), h("option", { value: "1" }, "Past-year only"), h("option", { value: "0" }, "Practice only"));
+      const q = h("input", { placeholder: "Search words or exam (e.g. 2023)", "aria-label": "Search", id: "pk-q" });
+      const list = h("div", { class: "qlist" }), pager = h("div", { class: "pager" }), status = h("span", { class: "pill warn shrink" }), count = h("span", { class: "small muted" });
+      let page = 0, matching = 0;
+      const free = () => s.qnos.filter(qn => !links[qn]);
+      const params = () => { const p = new URLSearchParams(Object.entries({ subject, qtype, chapter: chap.value, difficulty: dif.value, year: yr.value, pyq: pyq.value, q: q.value.trim() }).filter(([, v]) => v)); return p; };
+      const syncStatus = () => { const f = free().length; status.textContent = f ? `${s.qnos.length - f} of ${s.qnos.length} picked · ${f} to go` : `All ${s.qnos.length} picked`; status.className = "pill shrink " + (f ? "warn" : "ok"); fillBtn.disabled = !f; fillBtn.textContent = f ? `Fill the remaining ${f} at random` : "Section full"; };
+      async function add(x, btn) {
+        const slot = free()[0]; if (!slot) { toast("This section is full."); return; }
+        btn.disabled = true; btn.textContent = "Adding…";
+        try { await save({ ...links, [slot]: x.id }); btn.textContent = `Added as Q${slot}`; btn.className = "btn ghost small"; syncStatus(); }
+        catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Add"; }
+      }
+      const actions = x => {
+        const at = Object.entries(links).find(([, id]) => id === x.id);
+        if (at) return h("span", { class: "pill ok" }, `In this test as Q${at[0]}`);
+        const b = h("button", { class: "btn gold small", type: "button" }, "Add");
+        b.onclick = () => add(x, b);
+        return b;
+      };
+      async function load(keep) {
+        if (!keep) page = 0;
+        const p = params(); p.set("full", "1"); p.set("limit", 10); p.set("offset", page * 10);
+        const r = await GET("/api/questions?" + p);
+        const fill = (sel, first, vals) => { const v = sel.value; sel.replaceChildren(h("option", { value: "" }, first), ...vals.map(x => h("option", { value: x, selected: String(x) === v }, x))); };
+        fill(chap, "All chapters", [...new Set(r.facets.chapters.filter(c => c.subject.toLowerCase() === subject).map(c => c.chapter))]);
+        fill(yr, "Any year", r.facets.years);
+        matching = r.matching;
+        count.textContent = matching ? `${matching} matching · showing ${page * 10 + 1}–${page * 10 + r.rows.length}` : "";
+        show(list, r.rows.length ? r.rows.map((x, i) => questionCard(x, page * 10 + i + 1, [], actions))
+          : h("p", { class: "empty" }, r.total ? `No ${titleCase(s.sec.subject)} ${QT[s.sec.qtype].toLowerCase()} questions match these filters.` : "The question bank is empty."));
+        const pages = Math.max(1, Math.ceil(matching / 10));
+        show(pager, h("button", { class: "btn ghost small", type: "button", disabled: page === 0, onclick: () => { page--; load(true); } }, "‹ Previous"),
+          h("span", { class: "small" }, `Page ${page + 1} of ${pages}`),
+          h("button", { class: "btn ghost small", type: "button", disabled: page >= pages - 1, onclick: () => { page++; load(true); } }, "Next ›"));
+        pager.hidden = pages < 2;
+        list.parentElement && (list.closest(".modal-card").scrollTop = 0);
+      }
+      const fillBtn = h("button", { class: "btn ghost small", type: "button", onclick: async () => {
+        const slots = free(); if (!slots.length) return;
+        const p = params(); p.set("order", "random"); p.set("limit", slots.length); if (used().length) p.set("exclude", used().join(","));
+        fillBtn.disabled = true;
+        try {
+          const r = await GET("/api/questions?" + p);
+          if (!r.rows.length) { toast("No more questions match these filters."); syncStatus(); return; }
+          const next = { ...links }; r.rows.forEach((x, i) => (next[slots[i]] = x.id));
+          await save(next); toast(`Added ${r.rows.length} question${r.rows.length === 1 ? "" : "s"}`); syncStatus(); load(true);
+        } catch (x) { toast(x.message); syncStatus(); }
+      } });
+      [chap, dif, yr, pyq].forEach(x => (x.onchange = () => load(false)));
+      let tm; q.oninput = () => { clearTimeout(tm); tm = setTimeout(() => load(false), 300); };
+      wideModal((b, close) => {
+        b.append(h("div", { class: "picker" },
+          h("div", { class: "qv-head" }, h("b", {}, `Pick for ${s.sec.name}`), h("span", { class: "small" }), h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: close }, "✕")),
+          h("p", { class: "small muted", style: "margin:0" }, `Showing ${titleCase(s.sec.subject)} questions of type “${QT[s.sec.qtype]}”${s.sec.qtype === "decimal" ? " (and integer)" : ""}. Each Add fills the next free question number.`),
+          h("div", { class: "row" }, chap, dif, yr, pyq), q, h("div", { class: "row", style: "align-items:center" }, status, count, h("span", { class: "shrink" }, fillBtn)),
+          list, pager, h("div", { class: "qv-foot" }, h("span", { style: "flex:1" }), h("button", { class: "btn small", type: "button", onclick: close }, "Done"))));
+        syncStatus(); load(false);
+      });
+    }
+    draw();
+    body.append(summary, wrap);
   }
 
   // ---- print sheets

@@ -171,3 +171,14 @@ svg.trend .dot.end { fill: var(--gold); stroke: var(--gold) }
 .qv-head b { font-size: 18px; } .qv-head span.small { flex: 1; }
 .qv-ans { font-size: 15px; }
 .qv-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 10px; position: sticky; bottom: -18px; background: var(--surface); padding-bottom: 4px; }
+
+/* test questions: slots per section, picker */
+.slots { display: grid; gap: 0; }
+.slot { display: flex; gap: 10px; align-items: center; padding: 8px 2px; border-top: 1px solid var(--line); min-width: 0; }
+.slot:first-child { border-top: 0; }
+.slot.empty { color: var(--muted); font-size: 13.5px; font-style: italic; }
+.slot > b { width: 42px; flex: none; }
+.slot-main { flex: 1; min-width: 0; }
+.slot-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker { display: grid; gap: 10px; min-width: 0; }
+@media (max-width: 600px) { .slot { flex-wrap: wrap; } .slot-main { flex-basis: calc(100% - 52px); } .slot-text { white-space: normal; } }

@@ -26,7 +26,7 @@ JEE Main (full and physics), Classic JEE Main, JEE Advanced (full and physics), 
 
 ## Running it
 
-Needs **Node.js 22.13 or newer**. There's no separate database to install: everything is kept in one file, `data/portal.db`.
+Needs **Node.js 22**. Without `DATABASE_URL`, everything is kept in one file, `data/portal.db`, so nothing else needs installing.
 
 ```
 npm install
@@ -40,24 +40,27 @@ Settings (environment variables):
 | Name | Meaning | Default |
 |---|---|---|
 | `PORT` | Web port | 3000 |
-| `DATA_DIR` | Folder for the database file | `./data` |
+| `DATABASE_URL` | PostgreSQL connection string (e.g. Neon). When set, data is stored there | not set |
+| `DATA_DIR` | Folder for the database file when `DATABASE_URL` isn't set | `./data` |
 | `ADMIN_USER`, `ADMIN_PASSWORD` | First central admin, created only when none exists | admin / change-me-now |
 
-## Putting it online (Render)
+## Where the data is kept
 
-This repository includes `render.yaml`, so Render fills in every setting itself.
+- **`DATABASE_URL` set** (recommended online): everything is stored in PostgreSQL, for example a free **Neon** database. Data survives restarts and updates.
+- **No `DATABASE_URL`**: everything is stored in one file, `portal.db`, in `DATA_DIR`. This is fine on your own computer or a server with a disk.
 
-1. On render.com choose **New > Blueprint** and pick this repository.
-2. When asked, type `ADMIN_USER` and `ADMIN_PASSWORD`. These are the first central-team login.
-3. Click **Apply**. Render creates the service with a 1 GB disk at `/var/data` on the Starter plan ($7/month + $0.25/GB).
+If neither can keep data (for example Render's free plan with no database), the portal still starts, but it shows the central team a red warning.
 
-The portal needs a disk to keep data. Without one (for example on the free plan) it still starts, but it shows the central team a red warning, and everything is erased on every restart or update.
+## Putting it online (free: Render + Neon)
+
+1. **Neon** (neon.com): create a project in the **AWS Asia Pacific (Singapore)** region. Click **Connect** and copy the connection string (it starts with `postgresql://`).
+2. **Render** (render.com): choose **New > Blueprint** and pick this repository. When asked, paste the Neon string into `DATABASE_URL`, and type `ADMIN_USER` and `ADMIN_PASSWORD`. Then click **Apply**.
+
+The free Render site sleeps after 15 minutes without visitors, and the first visit after that takes about a minute. Upgrade the Render plan to Starter ($7/month) to stop that; the data stays in Neon. Neon's free plan holds 1 GB.
 
 Every push to the `main` branch updates the live site automatically.
 
-To move to your own server later, copy the folder and the `portal.db` file, run `npm install`, then `npm start` behind a web server with HTTPS (nginx or Caddy).
-
-**Backups:** copy `portal.db` regularly, for example a daily copy to Google Drive. That one file holds everything.
+**Backups:** under **Account**, the central team can download a full backup (JSON for PostgreSQL, a `.db` file otherwise). Keep one every week.
 
 ## Adding students from Excel
 

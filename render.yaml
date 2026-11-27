@@ -1,23 +1,20 @@
 # Render Blueprint: in Render choose New > Blueprint and pick this repository.
-# It creates the live portal with a disk, so data is kept across restarts.
+# Free plan + a free Neon PostgreSQL database (DATABASE_URL), so data is kept.
+# Later, to stop the site sleeping, change plan to "starter" ($7/month); the data stays in Neon.
 services:
   - type: web
     name: test-portal
     runtime: node
-    plan: starter            # $7/month; disks need a paid plan
-    region: singapore        # closest Render region to India
+    plan: free
+    region: singapore        # pick Neon's Singapore region too, so they are close
     branch: main
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
-      - key: DATA_DIR
-        value: /var/data
-      - key: ADMIN_USER          # Render asks you to type these once
+      - key: DATABASE_URL      # the connection string from Neon (postgresql://...)
+        sync: false
+      - key: ADMIN_USER        # first central-team login
         sync: false
       - key: ADMIN_PASSWORD
         sync: false

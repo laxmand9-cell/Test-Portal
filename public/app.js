@@ -597,7 +597,7 @@
         const done = p.loaded >= p.count;
         const btn = h("button", { class: "btn gold", type: "button", hidden: done, onclick: async () => {
           btn.disabled = true; btn.textContent = `Adding ${p.count - p.loaded} questions…`;
-          try { const r = await POST(`/api/packs/${p.id}/load`); toast(`Added ${r.added} questions`); box.replaceWith(packsCard(reload)); reload(); }
+          try { const r = await POST(`/api/packs/${p.id}/load`); toast(`Added ${r.added} questions to the bank`); box.replaceWith(packsCard(reload)); reload(); }
           catch (x) { toast(x.message); btn.disabled = false; btn.textContent = "Try again"; }
         } }, p.loaded ? `Add the remaining ${p.count - p.loaded}` : `Add all ${p.count} questions`);
         return h("div", { class: "row", style: "align-items:center" }, h("div", {}, h("b", {}, p.name), h("div", { class: "small muted" }, p.note,

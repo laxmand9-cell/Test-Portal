@@ -440,7 +440,10 @@ app.get("/api/packs", auth, central, wrap(async () => {
   const out = [];
   for (const [id, p] of Object.entries(PACKS)) {
     let count = 0; try { count = packData(id).questions.length; } catch (e) { continue; }
-    out.push({ id, name: p.name, note: p.note, count, loaded: (await q1("SELECT COUNT(*) AS n FROM questions WHERE ref LIKE ?", p.prefix + "%")).n });
+    const loaded = (await q1("SELECT COUNT(*) AS n FROM questions WHERE ref LIKE ?", p.prefix + "%")).n;
+    // once a set has been added it is not offered again (questions deleted later, e.g. duplicates, stay deleted)
+    const done = loaded > 0 || !!(await q1("SELECT 1 AS x FROM settings WHERE key=?", "pack." + id));
+    if (!done) out.push({ id, name: p.name, note: p.note, count, loaded });
   }
   return out;
 }));
@@ -458,6 +461,8 @@ app.post("/api/packs/:id/load", auth, central, wrap(async req => {
     // questions added before the Exam field existed get it now
     await run("UPDATE questions SET exam=? WHERE ref LIKE ? AND (exam = '' OR exam IS NULL)", p.exam, p.prefix + "%");
   });
+  await run("DELETE FROM settings WHERE key=?", "pack." + req.params.id);
+  await run("INSERT INTO settings (key, value) VALUES (?, ?)", "pack." + req.params.id, String(Date.now()));
   return { added: todo.length, total: have.size + todo.length };
 }));
 

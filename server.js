@@ -1085,6 +1085,14 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     await run("UPDATE tests SET max_exits=0");
     await run("INSERT INTO settings (key, value) VALUES ('migr.exits-warn-only', ?)", String(Date.now()));
   }
+  // chemistry set: options moved onto their own (A)-(D) lines like physics; update copies added before this change
+  if (!(await q1("SELECT 1 AS x FROM settings WHERE key='migr.chem-opts-1'"))) {
+    if ((await q1("SELECT COUNT(*) AS n FROM questions WHERE ref LIKE 'chm:%'")).n > 0) {
+      const qs = packData("chemistry").questions;
+      await tx(async () => { for (const q of qs) await run("UPDATE questions SET text=? WHERE ref=? AND text LIKE '%<p>(1)%'", q.text, "chm:" + q.ref); });
+    }
+    await run("INSERT INTO settings (key, value) VALUES ('migr.chem-opts-1', ?)", String(Date.now()));
+  }
   console.log(`Data is stored in ${db.kind === "postgres" ? "PostgreSQL (DATABASE_URL)" : db.file}`);
   if (!(await q1("SELECT id FROM users WHERE role='central' LIMIT 1"))) {
     const u = process.env.ADMIN_USER || "admin";

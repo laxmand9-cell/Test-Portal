@@ -511,3 +511,59 @@ body.exam-mode *, body.exam-mode *::before, body.exam-mode *::after { animation:
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important }
   .sk { background: var(--sunk) }
 }
+
+/* ---------- exam cards (Tests page and home) ---------- */
+.ec-bar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 14px }
+.ec-bar input { max-width: 260px } .ec-bar select { width: auto }
+.seg { display: inline-flex; border: 1.5px solid var(--navy); border-radius: 999px; overflow: hidden }
+.seg button { font: 600 13px var(--font); border: 0; background: transparent; color: var(--navy); padding: 6px 13px; cursor: pointer }
+.seg button small { opacity: .7; font-weight: 500 }
+.seg button.on { background: var(--navy); color: var(--on-navy) }
+.ecards { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px }
+.ec { --c: #2e7d5b; --c-soft: #e3f4ec; position: relative; background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--c) 45%, var(--line));
+  border-radius: 12px; padding: 12px 13px 0; display: flex; flex-direction: column; gap: 8px; cursor: pointer; min-width: 0;
+  box-shadow: 0 1px 2px rgba(19,42,85,.06); transition: transform .15s, box-shadow .15s, border-color .15s }
+.ec.ec-on { --c: #1f6fd1; --c-soft: #e4effc }
+@media (prefers-color-scheme: dark) { .ec { --c: #5cc98a; --c-soft: #12301f } .ec.ec-on { --c: #7fb0f0; --c-soft: #13243f } }
+.ec:hover, .ec:focus-visible { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(19,42,85,.13); border-color: var(--c); outline: none }
+.ec header { display: grid; gap: 1px; text-align: center }
+.ec-title { color: var(--c); font-size: 15px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+.ec-code { font-size: 11.5px; color: var(--muted) }
+.ec-tags { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center }
+.ec-tags span { font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 1px 8px; border-radius: 999px; background: var(--sunk); color: var(--muted) }
+.ec-tags .ec-kind { background: var(--c-soft); color: var(--c); text-transform: uppercase }
+.ec-st.live { background: var(--bad-soft); color: var(--bad) } .ec-st.live::before { content: "● " }
+.ec-st.upcoming { background: var(--warn-soft); color: var(--warn) }
+.ec-pub.ok { background: var(--ok-soft); color: var(--ok) }
+.ec-time { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 4px; background: var(--c-soft); border-radius: 8px; padding: 6px 8px; text-align: center }
+.ec-time div { display: grid; line-height: 1.25 } .ec-time span { font-size: 11px; color: var(--c); font-weight: 600 }
+.ec-time b { font-size: 13.5px } .ec-time small { font-size: 11px; color: var(--muted) } .ec-time i { font-style: normal; color: var(--c) }
+.ec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 0; font-size: 13px }
+.ec-grid dt { color: var(--c); font-size: 11.5px } .ec-grid dd { margin: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ec-grid dd small { color: var(--muted) }
+.ec-batches { display: flex; flex-wrap: wrap; gap: 4px }
+.ec-batches span { font-size: 11px; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ec-batches .more { font-weight: 700 }
+.ec footer { margin: auto -13px 0; border-top: 1px solid var(--line); display: flex; align-items: center }
+.ec-q { flex: 1; text-align: center; font-size: 12.5px; font-weight: 600; text-decoration: none; padding: 7px 4px; color: var(--navy) }
+.ec-q + .ec-q { border-left: 1px solid var(--line) }
+.ec-q:hover { background: var(--gold-soft) }
+.ec-go { padding: 0 10px; color: var(--c); font-size: 18px; font-weight: 700; transition: transform .15s }
+.ec:hover .ec-go { transform: translateX(3px) }
+
+/* ---------- clickable options in the question bank ---------- */
+.try { display: grid; gap: 8px }
+.opts-i { display: grid; gap: 6px }
+.opt { display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; font: inherit; color: var(--fg); background: var(--surface);
+  border: 1.5px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; transition: border-color .12s, background .12s }
+.opt .rich { min-width: 0 } .opt .rich p { margin: 0 }
+.opt-l { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; border: 1.5px solid var(--navy); color: var(--navy) }
+.opt:hover:not(:disabled) { border-color: var(--navy); background: var(--sunk) }
+.opt.sel { border-color: var(--navy); background: var(--gold-soft) } .opt.sel .opt-l { background: var(--navy); color: var(--on-navy) }
+.opt:disabled { cursor: default; opacity: .75 }
+.opt.right { border-color: var(--ok); background: var(--ok-soft); opacity: 1 } .opt.right .opt-l { background: var(--ok); border-color: var(--ok); color: #fff }
+.opt.wrong { border-color: var(--bad); background: var(--bad-soft); opacity: 1 } .opt.wrong .opt-l { background: var(--bad); border-color: var(--bad); color: #fff }
+.try-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center }
+.try-fb { font-weight: 600 } .try-fb:empty { display: none }
+.try-fb.ok { color: var(--ok) } .try-fb.bad { color: var(--bad) }
+@media print { .ec footer, .ec-bar, .try-row .link { display: none } }

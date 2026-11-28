@@ -231,11 +231,53 @@
         testsTable(tests.slice(0, 8))));
   }, ["central", "zone", "campus"]);
 
+  // exam cards: compact, clickable, with quick links (central/zone/campus)
+  const tWhen = ms => { const d = new Date(ms); return [d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase(),
+    d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) + " '" + String(d.getFullYear()).slice(2)]; };
+  function testStatus(t) {
+    const online = t.mode && t.mode !== "omr", now = Date.now();
+    if (online && t.opens_at && now < t.opens_at) return ["upcoming", "Upcoming"];
+    if (online && t.opens_at && (!t.closes_at || now <= t.closes_at)) return ["live", "Live now"];
+    if (online && t.closes_at && now > t.closes_at) return ["over", "Window closed"];
+    return null;
+  }
+  function examCard(t) {
+    const online = t.mode && t.mode !== "omr";
+    const kind = t.mode === "cbt" ? "Online" : t.mode === "both" ? "Online + OMR" : "OMR exam";
+    const st = testStatus(t);
+    const open = () => (location.hash = `#/tests/${t.id}`);
+    const cell = (label, ...val) => h("div", {}, h("dt", {}, label), h("dd", {}, ...val));
+    const names = t.batch_ids.map(id => { const b = batchOf(id); return b ? `${campusName(b.campus_id)} ${b.name}` : ""; }).filter(Boolean);
+    const quick = (label, tab) => h("a", { class: "ec-q", href: `#/tests/${t.id}/${tab}`, onclick: e => e.stopPropagation() }, label);
+    const qs = t.linked_count ? `${t.linked_count} / ${t.questions}` : t.questions;
+    return h("article", { class: "ec " + (online ? "ec-on" : "ec-omr"), tabindex: 0, role: "link", "aria-label": `Open ${t.name}`,
+      onclick: open, onkeydown: e => { if (e.key === "Enter" && e.target === e.currentTarget) open(); } },
+      h("header", {}, h("b", { class: "ec-title", title: t.name }, t.name), h("span", { class: "ec-code mono" }, t.code)),
+      h("div", { class: "ec-tags" }, h("span", { class: "ec-kind" }, kind), st ? h("span", { class: "ec-st " + st[0] }, st[1]) : null,
+        h("span", { class: "ec-pub " + (t.published ? "ok" : "") }, t.published ? "Published" : "Not published")),
+      online && t.opens_at ? h("div", { class: "ec-time" },
+        h("div", {}, h("span", {}, "From"), h("b", {}, tWhen(t.opens_at)[0]), h("small", {}, tWhen(t.opens_at)[1])),
+        h("i", { "aria-hidden": "true" }, "→"),
+        h("div", {}, h("span", {}, "To"), t.closes_at ? [h("b", {}, tWhen(t.closes_at)[0]), h("small", {}, tWhen(t.closes_at)[1])] : h("b", {}, "Open"))) : null,
+      h("dl", { class: "ec-grid" },
+        online ? null : cell("Date", t.test_date ? fmtDate(t.test_date) : "—"),
+        cell("Questions", qs),
+        online ? cell("Duration", `${t.duration} min`) : cell("Template", t.sheet_title.replace(/\s*\(.*\)$/, "")),
+        online ? cell("Attempts", h("b", {}, t.attempt_count || 0)) : null,
+        cell("OMRs read", h("b", {}, `${t.result_count}`), h("small", {}, ` / ${t.student_count}`))),
+      names.length ? h("div", { class: "ec-batches", title: names.join(", ") }, names.slice(0, 2).map(n => h("span", {}, n)), names.length > 2 ? h("span", { class: "more" }, `+${names.length - 2}`) : null) : null,
+      h("footer", {}, quick("Results", "results"), state.me.role === "central" ? quick("Questions", "questions") : quick("Toppers", "toppers"),
+        h("a", { class: "ec-q", href: `#/print/${t.id}`, onclick: e => e.stopPropagation() }, "Print"), h("span", { class: "ec-go", "aria-hidden": "true" }, "›")));
+  }
   function testsTable(tests) {
     if (!tests.length) return h("p", { class: "empty" }, state.me.role === "central" ? "No tests yet. Create one with New test." : "No tests for your campuses yet.");
-    return h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Code", "Test", "Sheet", "Batches", "Sheets read", "Results"].map(t => h("th", {}, t)))),
+    return h("div", { class: "ecards" }, tests.map(examCard));
+  }
+  function testsList(tests) {
+    if (!tests.length) return h("p", { class: "empty" }, "No tests match.");
+    return h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Code", "Test", "Type", "Batches", "Sheets read", "Results"].map(t => h("th", {}, t)))),
       h("tbody", {}, tests.map(t => h("tr", { tabindex: 0, onclick: () => (location.hash = `#/tests/${t.id}`), onkeydown: e => e.key === "Enter" && (location.hash = `#/tests/${t.id}`) },
-        h("td", {}, fmtDate(t.test_date)), h("td", { class: "mono" }, t.code), h("td", {}, t.name), h("td", {}, t.sheet_title),
+        h("td", {}, fmtDate(t.test_date)), h("td", { class: "mono" }, t.code), h("td", {}, t.name), h("td", {}, t.mode === "cbt" ? "Online" : t.mode === "both" ? "Online + OMR" : "OMR"),
         h("td", {}, t.batch_ids.length), h("td", { class: "num" }, `${t.result_count} / ${t.student_count}`),
         h("td", {}, h("span", { class: "pill " + (t.published ? "ok" : "") }, t.published ? "Published" : "Not published")))))));
   }
@@ -553,19 +595,64 @@
       h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: close }, "✕")), info, list); load(); });
   }
 
+  // options you can click (or a number you can type) to check the answer; "Show answer" reveals it
+  function tryIt(x) {
+    const box = h("div", { class: "try" }), fb = h("div", { class: "try-fb", "aria-live": "polite" });
+    const L = "ABCD", mc = x.qtype === "single" || x.qtype === "multi", ans = String(x.answer || "");
+    let done = false;
+    const reveal = (msg, good) => { done = true; fb.className = "try-fb " + (good === true ? "ok" : good === false ? "bad" : ""); fb.replaceChildren(msg); again.hidden = false; showBtn.hidden = true; };
+    const again = h("button", { class: "link small", type: "button", hidden: true, onclick: () => reset() }, "Try again");
+    const showBtn = h("button", { class: "link small", type: "button", onclick: () => mark(null) }, "Show answer");
+    let opts = [], input = null, checkBtn = null;
+    function mark(picked) {
+      if (mc) {
+        opts.forEach((b, k) => { b.disabled = true; b.classList.toggle("right", ans.includes(L[k])); b.classList.toggle("wrong", picked != null && picked.includes(L[k]) && !ans.includes(L[k])); });
+        if (checkBtn) checkBtn.hidden = true;
+      } else if (input) { input.disabled = true; checkBtn.hidden = true; }
+      const show = h("span", {}, "Answer: ", h("b", { class: "mono" }, ans.replace(":", " to ")));
+      if (picked == null) return reveal(show);
+      const good = mc ? [...picked].sort().join("") === ans : (() => { const v = parseFloat(picked); const [lo, hi = lo] = ans.split(":").map(Number); return !isNaN(v) && v >= Math.min(lo, hi) - 1e-9 && v <= Math.max(lo, hi) + 1e-9; })();
+      reveal(good ? h("span", {}, "✓ Correct") : h("span", {}, "✗ Not quite. ", show), good);
+    }
+    function reset() {
+      done = false; fb.className = "try-fb"; fb.replaceChildren(); again.hidden = true; showBtn.hidden = false;
+      opts.forEach(b => { b.disabled = false; b.classList.remove("right", "wrong", "sel"); b.setAttribute("aria-pressed", "false"); });
+      if (input) { input.disabled = false; input.value = ""; checkBtn.hidden = false; }
+      if (checkBtn && mc) { checkBtn.hidden = false; checkBtn.disabled = true; }
+    }
+    if (mc && x.options && x.options.some(Boolean)) {
+      const multi = x.qtype === "multi";
+      if (multi) checkBtn = h("button", { class: "btn small", type: "button", disabled: true, onclick: () => mark(opts.filter(b => b.classList.contains("sel")).map(b => b.dataset.k).join("")) }, "Check");
+      opts = x.options.map((o, k) => o ? h("button", { type: "button", class: "opt", "data-k": L[k], "aria-pressed": "false", onclick: e => {
+        if (done) return; const b = e.currentTarget;
+        if (!multi) return mark(L[k]);
+        b.classList.toggle("sel"); b.setAttribute("aria-pressed", String(b.classList.contains("sel")));
+        checkBtn.disabled = !opts.some(z => z.classList.contains("sel"));
+      } }, h("span", { class: "opt-l" }, L[k]), x.fmt === "html" ? richNode(o) : h("span", {}, o)) : null).filter(Boolean);
+      opts.forEach(b => renderMath(b));
+      box.append(h("div", { class: "opts-i" }, opts), ...(multi ? [h("p", { class: "small muted", style: "margin:0" }, "One or more options may be correct. Pick them, then press Check.")] : []));
+    } else if (!mc) {
+      input = h("input", { type: "text", inputmode: "decimal", placeholder: x.qtype === "integer" ? "Your answer (integer)" : "Your answer", "aria-label": "Your answer", style: "max-width:200px",
+        onkeydown: e => { if (e.key === "Enter") { e.preventDefault(); checkBtn.click(); } } });
+      checkBtn = h("button", { class: "btn small", type: "button", onclick: () => input.value.trim() && mark(input.value.trim()) }, "Check");
+      box.append(h("div", { class: "row", style: "align-items:center;gap:8px" }, input, checkBtn));
+    }
+    box.append(h("div", { class: "try-row" }, fb, checkBtn && mc ? checkBtn : null, showBtn, again));
+    return box;
+  }
+
   // one question shown in full in the bank list
   function questionCard(x, no, ids, actions) {
     const sol = x.solution ? h("details", { class: "qc-sol" }, h("summary", {}, "Solution")) : null;
     if (sol) sol.addEventListener("toggle", () => { if (sol.open && sol.children.length === 1) sol.append(x.fmt === "html" ? richNode(x.solution) : h("div", { style: "white-space:pre-wrap" }, x.solution)); });
-    const mc = x.qtype === "single" || x.qtype === "multi";
     return h("article", { class: "qc" },
       h("div", { class: "qc-head" }, h("b", { class: "qc-no" }, `${no}.`),
         h("span", { class: "small muted qc-meta" }, [x.chapter, x.topic, QT[x.qtype]].filter(Boolean).join(" · ")),
         h("span", { class: "pill lv" + (QLEVELS.indexOf(x.difficulty) + 1) }, x.difficulty), x.source ? h("span", { class: "pill navy" }, x.source) : x.exam ? h("span", { class: "pill" }, x.exam) : null),
       x.fmt === "html" ? richNode(x.text) : x.text ? h("div", { style: "white-space:pre-wrap" }, x.text) : null,
       x.image ? h("img", { src: x.image, alt: `Question ${x.id}`, style: "max-width:100%;border-radius:4px" }) : null,
-      mc && x.options && x.options.some(Boolean) ? h("div", { class: "opts" }, x.options.map((o, k) => o ? h("div", {}, `(${"ABCD"[k]}) ${o}`) : null)) : null,
-      h("div", { class: "qc-foot" }, h("span", {}, "Answer: ", h("b", { class: "mono" }, x.answer)), sol,
+      tryIt(x),
+      h("div", { class: "qc-foot" }, sol,
         h("span", { class: "small muted" }, `ID ${x.id}`), h("span", { style: "flex:1" }),
         actions ? actions(x) : [h("button", { class: "btn ghost small", type: "button", onclick: () => viewQuestion(x.id, ids) }, "View"),
           h("a", { class: "btn small", href: `#/bank/${x.id}` }, "Edit")]));
@@ -587,7 +674,6 @@
       let q; try { q = await GET(`/api/questions/${cur}`); } catch (x) { box.replaceChildren(h("p", { class: "err" }, x.message)); return; }
       if (cur !== q.id) return;
       const i = ids.indexOf(cur);
-      const mc = q.qtype === "single" || q.qtype === "multi";
       show(box,
         h("div", { class: "qv-head" }, h("b", {}, `Question ${q.id}`),
           h("span", { class: "small muted" }, i >= 0 ? `${i + 1} of ${ids.length}` : ""),
@@ -596,8 +682,7 @@
           h("span", { class: "pill lv" + (QLEVELS.indexOf(q.difficulty) + 1) }, q.difficulty), q.source ? h("span", { class: "pill navy" }, q.source) : null),
         q.fmt === "html" ? richNode(q.text) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null,
         q.image ? h("img", { src: q.image, alt: `Question ${q.id}`, style: "max-width:100%;border-radius:4px" }) : null,
-        mc && q.options && q.options.some(Boolean) ? h("div", { class: "opts" }, q.options.map((o, k) => o ? h("div", {}, `(${"ABCD"[k]}) ${o}`) : null)) : null,
-        h("div", { class: "qv-ans" }, "Answer: ", h("b", { class: "mono" }, q.answer)),
+        tryIt(q),
         q.solution ? h("details", {}, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : null,
         h("div", { class: "qv-foot" },
           h("button", { class: "btn ghost small", type: "button", disabled: i <= 0, onclick: () => step(-1) }, "‹ Previous"),
@@ -688,9 +773,31 @@
 
   // ================================================================ tests
   route(/^\/tests$/, async view => {
-    const tests = await GET("/api/tests");
-    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Tests"), h("p", { class: "sub" }, "Each test has an OMR sheet type, the batches that write it, and an answer key.")),
-      state.me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null), h("div", { class: "card" }, testsTable(tests)));
+    const [tests] = await Promise.all([GET("/api/tests"), structure()]);
+    let kind = "", look = "cards";
+    try { look = localStorage.getItem("tests-look") || "cards"; } catch (e) { /* ignore */ }
+    const q = h("input", { placeholder: "Search test name or code", "aria-label": "Search tests" });
+    const stSel = h("select", { "aria-label": "Status" }, [["", "Any status"], ["live", "Live now"], ["upcoming", "Upcoming"], ["pub", "Published"], ["unpub", "Not published"]].map(([v, t]) => h("option", { value: v }, t)));
+    const seg = h("div", { class: "seg", role: "group", "aria-label": "Exam type" });
+    const lookBtn = h("button", { class: "btn ghost small", type: "button" });
+    const box = h("div", {}), count = h("span", { class: "small muted" });
+    function draw() {
+      seg.replaceChildren(...[["", "All"], ["online", "Online"], ["omr", "OMR"]].map(([v, t]) => h("button", { type: "button", class: kind === v ? "on" : "", "aria-pressed": String(kind === v), onclick: () => { kind = v; draw(); } },
+        t, h("small", {}, ` ${tests.filter(x => !v || (v === "omr" ? !x.mode || x.mode === "omr" : x.mode && x.mode !== "omr")).length}`))));
+      lookBtn.textContent = look === "cards" ? "☰ List view" : "▦ Card view";
+      const words = q.value.trim().toLowerCase();
+      const list = tests.filter(t => (!kind || (kind === "omr" ? !t.mode || t.mode === "omr" : t.mode && t.mode !== "omr"))
+        && (!words || (t.name + " " + t.code).toLowerCase().includes(words))
+        && (!stSel.value || (stSel.value === "pub" ? t.published : stSel.value === "unpub" ? !t.published : (testStatus(t) || [])[0] === stSel.value)));
+      count.textContent = `${list.length} of ${tests.length} tests`;
+      show(box, look === "cards" ? (list.length ? h("div", { class: "ecards" }, list.map(examCard)) : h("p", { class: "empty" }, tests.length ? "No tests match." : "No tests yet.")) : testsList(list));
+    }
+    lookBtn.onclick = () => { look = look === "cards" ? "list" : "cards"; try { localStorage.setItem("tests-look", look); } catch (e) { /* ignore */ } draw(); };
+    q.oninput = draw; stSel.onchange = draw;
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Exams (Online & OMR)"), h("p", { class: "sub" }, "Create and edit exams, and view results. Click a card to open it.")),
+      state.me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null),
+      h("div", { class: "ec-bar" }, seg, q, stSel, count, h("span", { style: "flex:1" }), lookBtn), box);
+    draw();
   }, ["central", "zone", "campus"]);
 
   const SHEETS = [["JM", "JEE Main · full (75)"], ["JMP", "JEE Main · physics (25)"], ["RJM", "Classic JEE Main (75)"], ["JA", "JEE Advanced · full (51)"], ["JAP", "JEE Advanced · physics (17)"],

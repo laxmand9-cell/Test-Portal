@@ -518,6 +518,8 @@ app.get("/api/tests", auth, admin, wrap(async req => {
     const r = await testRow(t);
     r.result_count = (await q1(`SELECT COUNT(*) AS n FROM results r JOIN users u ON u.id=r.student_id WHERE r.test_id=? AND ${inList("u.campus_id", scope)}`, t.id)).n;
     r.student_count = (await q1(`SELECT COUNT(*) AS n FROM users u JOIN test_batches tb ON tb.batch_id=u.batch_id WHERE tb.test_id=? AND u.role='student' AND u.active=1 AND ${inList("u.campus_id", scope)}`, t.id)).n;
+    r.attempt_count = (await q1(`SELECT COUNT(*) AS n FROM attempts a JOIN users u ON u.id=a.student_id WHERE a.test_id=? AND ${inList("u.campus_id", scope)}`, t.id)).n;
+    r.linked_count = (await q1("SELECT COUNT(*) AS n FROM test_questions WHERE test_id=?", t.id)).n;
     out.push(r);
   }
   return out;

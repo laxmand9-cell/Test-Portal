@@ -149,14 +149,58 @@
       requestAnimationFrame(tick);
     }
   }
+  // ---- the frame: a side menu on wide screens, a top bar with a slide-in menu on narrow ones (students get tabs at the bottom)
+  const NAV_ICON = {
+    home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
+    tests: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+    analysis: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    students: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.5 5.2"/>',
+    bank: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5M8 7h7"/>',
+    structure: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>',
+    admins: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    account: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.4-6 8-6s7 2 8 6"/>',
+    results: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    mistakes: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+  };
+  const navIcon = k => h("span", { class: "nav-ic", "aria-hidden": "true", html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>` });
+  const initials = s => String(s || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
+  let brandLoaded = false;
+  async function loadBrand() {
+    if (brandLoaded) return; brandLoaded = true;
+    let b = {}; try { b = await GET("/api/brand"); } catch (e) { /* default look */ }
+    const name = (b.institute || "").trim();
+    $("#brand-name").textContent = name ? name.split(/[,(]/)[0].trim().slice(0, 28) : "Test Portal";
+    $("#brand-sub").textContent = "Test Portal";
+    $("#brand-sub").hidden = !name;
+    show($("#brand-logo"), b.logo ? h("img", { src: b.logo, alt: "" }) : h("span", {}, initials(name || "Test Portal").slice(0, 1)));
+  }
+  function setMenu(open) {
+    document.body.classList.toggle("menu-open", open);
+    $("#menu-btn").setAttribute("aria-expanded", String(open));
+    $("#scrim").hidden = !open;
+  }
+  $("#menu-btn").addEventListener("click", () => setMenu(!document.body.classList.contains("menu-open")));
+  $("#scrim").addEventListener("click", () => setMenu(false));
+  addEventListener("keydown", e => { if (e.key === "Escape" && document.body.classList.contains("menu-open")) setMenu(false); });
   function drawBar(hash) {
     $("#bar").hidden = false;
-    const me = state.me;
-    const items = me.role === "student" ? [["#/my", "My results"], ["#/mistakes", "My mistakes"], ["#/account", "Account"]]
-      : [["#/", "Home"], ["#/tests", "Tests"], ["#/dashboard", "Analysis"], ["#/students", "Students"], ...(me.role === "central" ? [["#/bank", "Question bank"], ["#/structure", "Zones & batches"], ["#/admins", "Admins"]] : [["#/structure", "Campuses & batches"]]), ["#/account", "Account"]];
-    $("#nav").replaceChildren(...items.map(([href, t]) => h("a", { href, class: ("#" + hash === href || (href !== "#/" && ("#" + hash).startsWith(href))) ? "on" : "" }, t)));
-    const place = me.role === "zone" ? ` · ${me.zone}` : me.role === "campus" ? ` · ${me.campus}` : me.role === "student" ? ` · ${me.roll}` : "";
-    $("#who").textContent = `${me.name || me.username} (${ROLE[me.role]}${place})`;
+    const me = state.me, student = me.role === "student";
+    document.body.classList.toggle("role-student", student);
+    document.body.classList.toggle("role-admin", !student);
+    setMenu(false);
+    loadBrand();
+    const items = student ? [["#/my", "My results", "results"], ["#/mistakes", "My mistakes", "mistakes"], ["#/account", "Account", "account"]]
+      : [["#/", "Home", "home"], ["#/tests", "Tests", "tests"], ["#/dashboard", "Analysis", "analysis"], ["#/students", "Students", "students"],
+        ...(me.role === "central" ? [["#/bank", "Question bank", "bank"], ["#/structure", "Zones & batches", "structure"], ["#/admins", "Admins", "admins"]] : [["#/structure", "Campuses & batches", "structure"]]),
+        ["#/account", "Account", "account"]];
+    $("#nav").replaceChildren(...items.map(([href, t, ic]) => {
+      const on = "#" + hash === href || (href !== "#/" && ("#" + hash).startsWith(href) && !(href === "#/my" && hash.startsWith("/mistakes")));
+      return h("a", { href, class: on ? "on" : "", "aria-current": on ? "page" : null }, navIcon(ic), h("span", {}, t));
+    }));
+    const place = me.role === "zone" ? me.zone : me.role === "campus" ? me.campus : student ? `Roll ${me.roll}` : "";
+    $("#who").textContent = me.name || me.username;
+    $("#who-role").textContent = [ROLE[me.role], place].filter(Boolean).join(" · ");
+    $("#avatar").textContent = initials(me.name || me.username);
     syncInstall();
   }
   // ---- install as an app (Android/desktop Chrome: install prompt; iPhone: Share > Add to Home Screen)
@@ -214,19 +258,17 @@
   route(/^\/$/, async view => {
     const [o, tests] = await Promise.all([GET("/api/overview"), GET("/api/tests"), structure(true)]);
     const me = state.me;
-    show(view, 
-      h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hello, ${me.name || me.username}`),
-        h("p", { class: "sub" }, me.role === "central" ? "You can see every zone, campus and batch." : me.role === "zone" ? `You can see all campuses in ${me.zone} zone.` : `You can see ${me.campus} campus.`)),
-        me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "New test") : null),
+    const tile = (n, label, ic, tone) => n == null ? null : h("div", { class: "stat si " + (tone || "") }, h("span", { class: "si-ic" }, navIcon(ic)), h("b", {}, n), h("span", {}, label));
+    show(view,
+      h("section", { class: "hero" }, h("div", { class: "hero-id" }, h("span", { class: "hero-av" }, initials(me.name || me.username)),
+          h("div", {}, h("p", { class: "hero-hi" }, greeting()), h("h1", {}, me.name || me.username),
+            h("p", { class: "hero-sub" }, me.role === "central" ? "You can see every zone, campus and batch." : me.role === "zone" ? `You can see all campuses in ${me.zone} zone.` : `You can see ${me.campus} campus.`))),
+        h("div", { class: "hero-actions" }, me.role === "central" ? h("a", { class: "btn gold", href: "#/tests/new" }, "+ New test") : null, h("a", { class: "btn glass", href: "#/dashboard" }, "Open analysis"))),
       o.temporary_storage ? h("div", { class: "card", style: "border-left:4px solid var(--bad)" }, h("h2", { class: "err" }, "Data is not being kept"),
         h("p", {}, "This site has no disk attached, so every student, test and mark is erased when the server restarts or updates. Fine for trying things out; attach a disk before adding real data.")) : null,
       h("div", { class: "stats" },
-        o.zones != null ? h("div", { class: "stat" }, h("b", {}, o.zones), h("span", {}, "Zones")) : null,
-        h("div", { class: "stat" }, h("b", {}, o.campuses), h("span", {}, "Campuses")),
-        h("div", { class: "stat" }, h("b", {}, o.batches), h("span", {}, "Batches")),
-        h("div", { class: "stat gold" }, h("b", {}, o.students), h("span", {}, "Students")),
-        h("div", { class: "stat" }, h("b", {}, o.tests), h("span", {}, "Tests")),
-        me.role === "central" ? h("div", { class: "stat" }, h("b", {}, o.questions), h("span", {}, "Questions in bank")) : null),
+        tile(o.zones, "Zones", "structure", "t-violet"), tile(o.campuses, "Campuses", "home", "t-blue"), tile(o.batches, "Batches", "students", "t-teal"),
+        tile(o.students, "Students", "account", "t-gold"), tile(o.tests, "Tests", "tests", "t-green"), me.role === "central" ? tile(o.questions, "Questions in bank", "bank", "t-rose") : null),
       h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Recent tests"), h("a", { href: "#/tests" }, "All tests")),
         testsTable(tests.slice(0, 8))));
   }, ["central", "zone", "campus"]);
@@ -1964,10 +2006,21 @@
   }, ["central", "zone", "campus"]);
 
   // ================================================================ student side
+  function greeting() { const hr = new Date().getHours(); return hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening"; }
+  // a ring that fills to a percentage
+  const ring = (pc, label) => h("div", { class: "ring", style: `--p:${Math.max(0, Math.min(100, pc))}`, role: "img", "aria-label": label }, h("b", {}, `${Math.round(pc)}%`));
   route(/^\/my$/, async view => {
     const tests = await GET("/api/my/tests");
     const me = state.me;
-    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, `Hi ${me.name || me.username}`), h("p", { class: "sub" }, `Roll ${me.roll} · ${me.batch ? me.batch.name : ""} · ${me.campus || ""}`))),
+    const last = tests[0], prev = tests[1], pc = t => (t && t.max ? (t.total / t.max) * 100 : 0);
+    const delta = last && prev ? Math.round((pc(last) - pc(prev)) * 10) / 10 : null;
+    show(view, h("section", { class: "hero" },
+        h("div", { class: "hero-id" }, h("span", { class: "hero-av" }, initials(me.name || me.username)),
+          h("div", {}, h("p", { class: "hero-hi" }, greeting()), h("h1", {}, me.name || me.username),
+            h("p", { class: "hero-sub" }, [`Roll ${me.roll}`, me.batch ? me.batch.name : "", me.campus || ""].filter(Boolean).join(" · ")))),
+        last ? h("a", { class: "hero-score", href: `#/my/${last.id}` }, ring(pc(last), `Latest test score ${Math.round(pc(last))} percent`),
+          h("div", {}, h("span", { class: "hero-lbl" }, "Latest test"), h("b", {}, last.name), h("span", { class: "hero-sub" }, `${last.total} / ${last.max} · rank ${last.rank_batch} of ${last.rank_batch_of} in batch`),
+            delta != null ? h("span", { class: "hero-chip " + (delta >= 0 ? "up" : "down") }, `${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} points from the test before`) : null)) : null),
       installHint(),
       await onlineTestsCard(),
       tests.length ? progressView(tests) : null,

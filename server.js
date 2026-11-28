@@ -1186,6 +1186,43 @@ app.get("/api/my/tests/:id", auth, wrap(async req => {
   return studentReport(t, req.user.id);
 }));
 
+// ------------------------------------------------------------------ paper discussion report (teachers, per campus / batch)
+// for each question: who skipped it, who got it wrong (and with which answer), how the whole institute did
+app.get("/api/tests/:id/discussion", auth, wrap(async req => {
+  if (req.user.role === "student") forbid();
+  const t = await visibleTest(req.user, req.params.id), scope = await campusScope(req.user), layout = layoutOf(t);
+  const campus = Number(req.query.campus) || null, batch = Number(req.query.batch) || null;
+  const { scored } = await scoredCached(t);
+  const mine = scored.filter(x => inScope(scope, x.campus_id) && (!campus || x.campus_id === campus) && (!batch || x.batch_id === batch));
+  const names = {}; for (const tbl of ["campuses", "batches"]) names[tbl] = new Map((await qa(`SELECT id, name FROM ${tbl}`)).map(r => [r.id, r.name]));
+  const linked = new Map((await qa(`SELECT tq.qno, q.text, q.image, q.fmt, q.chapter, q.topic, q.difficulty FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id)).map(r => [r.qno, r]));
+  const allRight = {};
+  for (const x of scored) for (const d of x.detail) if (d.result === "correct" || d.result === "bonus") allRight[d.q] = (allRight[d.q] || 0) + 1;
+  const questions = OMR.questionIndex(layout).map(({ qno, sec }) => {
+    const skipped = [], wrong = [], partial = [], picks = {};
+    let right = 0;
+    for (const x of mine) {
+      const d = x.detail.find(y => y.q === qno); if (!d) continue;
+      const who = { roll: x.roll, name: x.name || "", batch: names.batches.get(x.batch_id) || "" };
+      if (d.result === "blank") skipped.push(who);
+      else if (d.result === "wrong") { wrong.push({ ...who, answer: d.marked || "" }); picks[d.marked || "?"] = (picks[d.marked || "?"] || 0) + 1; }
+      else if (d.result === "partial") partial.push({ ...who, answer: d.marked || "" });
+      else if (d.result === "correct" || d.result === "bonus") right++;
+    }
+    const q = linked.get(qno) || null, byRoll = (a, b) => String(a.roll).localeCompare(String(b.roll), undefined, { numeric: true });
+    const common = Object.entries(picks).sort((a, b) => b[1] - a[1])[0];
+    return { qno, subject: sec.subject, section: sec.name, qtype: sec.qtype, opts: sec.options || "", key: (JSON.parse(t.answer_key || "{}"))[qno] || "",
+      question: q ? { text: q.text, image: q.image, fmt: q.fmt, chapter: q.chapter, topic: q.topic, level: q.difficulty } : null,
+      n: mine.length, right, skipped: skipped.sort(byRoll), wrong: wrong.sort(byRoll), partial: partial.sort(byRoll),
+      common_wrong: common ? { answer: common[0], count: common[1] } : null,
+      all_right_pct: scored.length ? Math.round(((allRight[qno] || 0) / scored.length) * 100) : 0 };
+  });
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title }, appeared: mine.length, total_appeared: scored.length,
+    campus: campus ? names.campuses.get(campus) || "" : "", batch: batch ? names.batches.get(batch) || "" : "",
+    roster: mine.map(x => ({ roll: x.roll, name: x.name || "" })).sort((a, b) => String(a.roll).localeCompare(String(b.roll), undefined, { numeric: true })),
+    subjects: [...new Set(layout.sections.map(x => x.subject))], options1234: layout.sections.some(x => x.options === "1234"), questions };
+}));
+
 // ------------------------------------------------------------------ chapter strength and practice (students)
 // every question the student met in a published test that is linked to the bank, with its chapter
 async function myQuestions(studentId) {

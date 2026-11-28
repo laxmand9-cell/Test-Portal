@@ -1021,7 +1021,7 @@
     const t = await GET(`/api/tests/${id}`);
     const layout = O.getLayout(t.sheet);
     const central = state.me.role === "central";
-    const tabs = [["results", "Results"], ["analysis", "Analysis"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
+    const tabs = [["results", "Results"], ["analysis", "Analysis"], ["discuss", "Paper discussion"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
     const body = h("div", { style: "display:grid;gap:16px" });
     show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
@@ -1030,7 +1030,7 @@
           h("span", { class: "pill " + (t.published ? "ok" : "warn") }, t.published ? "Published to students" : "Not published yet"),
           h("a", { class: "btn gold small", href: `#/print/${id}` }, "Print paper"),
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
-      h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
+      h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: k === "discuss" ? `#/discuss/${id}` : `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
     if (tab === "analysis") { if (await resultsTab(body, t, layout, "analysis") !== false) await toppersTab(body, t, true); return; }
     if (tab === "questions" && central) return questionsTab(body, t, layout);
@@ -1247,6 +1247,106 @@
         field("Extra instructions", ins), err, h("div", {}, h("button", { class: "btn", type: "submit" }, "Save heading"))));
     draw();
   }, ["central"]);
+
+  // ================================================================ paper discussion report: most skipped, most wrong, easy ones missed, with names
+  route(/^\/discuss\/(\d+)$/, async (view, id) => {
+    await structure();
+    const [t, brand] = await Promise.all([GET(`/api/tests/${id}`), GET("/api/brand").catch(() => ({}))]);
+    const me = state.me, s = state.s;
+    const pref = (() => { try { return JSON.parse(localStorage.getItem("tp-discuss") || "{}"); } catch (e) { return {}; } })();
+    const opt = Object.assign({ subject: "", top: "10", showQ: true, names: true, campus: "", batch: "" }, pref);
+    const keep = () => { try { localStorage.setItem("tp-discuss", JSON.stringify(opt)); } catch (e) { /* off */ } };
+    const testBatches = s.batches.filter(b => t.batch_ids.includes(b.id));
+    const campuses = s.campuses.filter(c => testBatches.some(b => b.campus_id === c.id));
+    if (me.role === "campus") opt.campus = String(me.campus_id || (campuses[0] || {}).id || "");
+    if (opt.campus && !campuses.some(c => String(c.id) === String(opt.campus))) opt.campus = campuses.length === 1 ? String(campuses[0].id) : "";
+    const out = h("div", { class: "pp-out dq-out" }), note = h("span", { class: "small muted" });
+    const nice = x => (x ? x[0] + x.slice(1).toLowerCase() : "");
+    const ans = (q, a) => (!a ? "—" : q.opts === "1234" && /^[A-D]+$/.test(a) ? [...a].map(c => "ABCD".indexOf(c) + 1).join(", ") : (q.qtype === "multi" ? [...a].join(", ") : a));
+    const pc = (k, n) => (n ? Math.round((k / n) * 100) : 0);
+    let data = null;
+    async function load() {
+      note.textContent = "Loading…";
+      const p = new URLSearchParams(Object.entries({ campus: opt.campus, batch: opt.batch }).filter(([, v]) => v));
+      try { data = await GET(`/api/tests/${id}/discussion?${p}`); note.textContent = ""; draw(); } catch (e) { note.textContent = e.message; }
+    }
+    const people = (label, list, withAns, q) => {
+      if (!list.length) return null;
+      // when most of the room is on the list, name the few who are not
+      if (!withAns && list.length >= 8 && list.length > q.n * 0.7) {
+        const on = new Set(list.map(p => String(p.roll))), rest = data.roster.filter(p => !on.has(String(p.roll)));
+        return h("div", { class: "dq-names" }, h("b", {}, `${label} (${list.length}): `), rest.length ? h("span", {}, `everyone except ${rest.length}: `, rest.flatMap((p, i) => [h("span", { class: "dq-p" }, `${p.roll} ${p.name}${i < rest.length - 1 ? "," : ""}`), " "])) : h("span", {}, "every student"));
+      }
+      return h("div", { class: "dq-names" }, h("b", {}, `${label} (${list.length}): `),
+      h("span", {}, list.flatMap((p, i) => [h("span", { class: "dq-p" }, `${p.roll} ${p.name}${withAns ? ` (${ans(q, p.answer)})` : ""}${i < list.length - 1 ? "," : ""}`), " "])));
+    };
+    function block(q, focus) {
+      const missed = q.skipped.length + q.wrong.length;
+      return h("article", { class: "dq" },
+        h("div", { class: "dq-h" }, h("span", { class: "dq-no" }, `Q${q.qno}`),
+          h("span", { class: "dq-stat" + (focus === "skip" ? " hot" : "") }, `Skipped ${q.skipped.length} (${pc(q.skipped.length, q.n)}%)`),
+          h("span", { class: "dq-stat" + (focus === "wrong" ? " hot" : "") }, `Wrong ${q.wrong.length} (${pc(q.wrong.length, q.n)}%)`),
+          h("span", { class: "dq-stat" }, `Right ${q.right} (${pc(q.right, q.n)}%)`),
+          h("span", { class: "dq-stat" }, `All campuses: ${q.all_right_pct}% right`),
+          h("span", { class: "dq-key" }, `Answer: ${ans(q, q.key)}`)),
+        q.question && (q.question.chapter || q.question.level) ? h("div", { class: "dq-tags" }, [q.question.chapter, q.question.topic].filter(Boolean).join(" · "), q.question.level ? h("span", { class: "dq-lv" }, q.question.level) : null) : null,
+        q.common_wrong && q.wrong.length > 1 ? h("div", { class: "dq-common" }, `Most common wrong answer: ${ans(q, q.common_wrong.answer)} (${q.common_wrong.count} student${q.common_wrong.count === 1 ? "" : "s"})`) : null,
+        opt.showQ && q.question ? h("div", { class: "dq-body" }, q.question.fmt === "html" ? richNode(q.question.text) : h("div", { style: "white-space:pre-wrap" }, q.question.text), q.question.image ? h("img", { src: q.question.image, alt: "" }) : null) : null,
+        opt.names ? h("div", { class: "dq-people" }, focus === "wrong" ? [people("Wrong", q.wrong, true, q), people("Skipped", q.skipped, false, q)] : [people("Skipped", q.skipped, false, q), people("Wrong", q.wrong, true, q)], people("Partly right", q.partial, true, q)) : null,
+        focus === "easy" && !missed ? null : null);
+    }
+    function subjectDoc(subj, first) {
+      const qs = data.questions.filter(q => q.subject === subj), top = opt.top === "all" ? 999 : Number(opt.top);
+      const skipped = qs.filter(q => q.skipped.length).sort((a, b) => b.skipped.length - a.skipped.length || b.wrong.length - a.wrong.length || a.qno - b.qno).slice(0, top);
+      const wrong = qs.filter(q => q.wrong.length).sort((a, b) => b.wrong.length - a.wrong.length || b.skipped.length - a.skipped.length || a.qno - b.qno).slice(0, top);
+      const easy = qs.filter(q => ((q.question && q.question.level === "Easy") || q.all_right_pct >= 60) && q.skipped.length + q.wrong.length)
+        .sort((a, b) => b.skipped.length + b.wrong.length - (a.skipped.length + a.wrong.length) || a.qno - b.qno).slice(0, top);
+      const avgRight = qs.length ? Math.round(qs.reduce((x, q) => x + pc(q.right, q.n), 0) / qs.length) : 0;
+      const part = (title, hint, list, focus) => h("section", { class: "dq-part" }, h("h3", {}, title, h("span", {}, ` · ${hint}`)),
+        list.length ? list.map(q => block(q, focus)) : h("p", { class: "muted" }, "None."));
+      return h("section", { class: "pp-page dq-page" + (first ? "" : " pp-break") },
+        h("header", { class: "pp-head" }, brand.logo ? h("img", { class: "pp-logo", src: brand.logo, alt: "" }) : null,
+          h("div", { class: "pp-inst-name" }, h("div", { class: "pp-org" }, brand.institute || "Paper discussion"), brand.tagline ? h("div", { class: "pp-tag" }, brand.tagline) : null),
+          h("div", { class: "pp-test" }, h("b", {}, data.test.name), h("div", {}, `${data.test.code}${data.test.test_date ? " · " + fmtDate(data.test.test_date) : ""}`), h("div", { class: "pp-doc" }, `Paper discussion · ${nice(subj)}`))),
+        h("div", { class: "dq-sum" }, h("span", {}, h("b", {}, data.campus || "All campuses"), data.batch ? ` · ${data.batch}` : ""),
+          h("span", {}, `Students: ${data.appeared}`), h("span", {}, `${qs.length} questions`), h("span", {}, `Average right per question: ${avgRight}%`)),
+        part("1. Most skipped", "discuss first: many students did not even try these", skipped, "skip"),
+        part("2. Most wrong", "students tried but got these wrong", wrong, "wrong"),
+        part("3. Easy questions missed", "marked Easy, or 60% or more of all students got them right", easy, "easy"));
+    }
+    function draw() {
+      if (!data) return;
+      if (!data.appeared) { show(out, h("p", { class: "empty" }, "No results for this choice yet. Upload scans first.")); return; }
+      const subs = opt.subject ? data.subjects.filter(x => x === opt.subject) : data.subjects;
+      show(out, ...subs.map((x, i) => subjectDoc(x, i === 0)));
+    }
+    const cSel = h("select", { id: "dq-campus", "aria-label": "Campus", disabled: me.role === "campus" },
+      me.role === "campus" ? null : h("option", { value: "" }, "All campuses"), campuses.map(c => h("option", { value: c.id, selected: String(c.id) === String(opt.campus) }, c.name)));
+    const bSel = h("select", { id: "dq-batch", "aria-label": "Batch" });
+    const fillB = () => { const list = testBatches.filter(b => !cSel.value || String(b.campus_id) === cSel.value);
+      bSel.replaceChildren(h("option", { value: "" }, "All batches"), ...list.map(b => h("option", { value: b.id, selected: String(b.id) === String(opt.batch) }, b.name + (cSel.value ? "" : ` · ${campusName(b.campus_id)}`))));
+      if (!list.some(b => String(b.id) === String(opt.batch))) { opt.batch = ""; bSel.value = ""; } };
+    fillB();
+    cSel.onchange = () => { opt.campus = cSel.value; opt.batch = ""; fillB(); keep(); load(); };
+    bSel.onchange = () => { opt.batch = bSel.value; keep(); load(); };
+    const subj = h("select", { id: "dq-subject", "aria-label": "Subject", onchange: e => { opt.subject = e.target.value; keep(); draw(); } },
+      h("option", { value: "" }, "All subjects"), [...new Set(O.getLayout(t.sheet).sections.map(x => x.subject))].map(x => h("option", { value: x, selected: opt.subject === x }, nice(x))));
+    const topSel = h("select", { id: "dq-top", "aria-label": "How many per list", onchange: e => { opt.top = e.target.value; keep(); draw(); } },
+      [["5", "Top 5 per list"], ["10", "Top 10 per list"], ["15", "Top 15 per list"], ["all", "Every question"]].map(([v, l]) => h("option", { value: v, selected: opt.top === v }, l)));
+    const chk = (k, label) => h("label", { class: "pp-opt" }, h("input", { type: "checkbox", checked: !!opt[k], onchange: e => { opt[k] = e.target.checked; keep(); draw(); } }), label);
+    document.body.classList.add("print-mode");
+    const leave = () => { document.body.classList.remove("print-mode"); window.removeEventListener("hashchange", leave); };
+    window.addEventListener("hashchange", leave);
+    show(view, h("div", { class: "pp-toolbar no-print" }, h("a", { href: `#/tests/${id}` }, "‹ Back to test"),
+        h("h1", { style: "margin:0;font-size:22px" }, "Paper discussion report"),
+        h("div", { class: "pp-tools" }, h("label", { class: "pp-opt" }, "Campus", cSel), h("label", { class: "pp-opt" }, "Batch", bSel), h("label", { class: "pp-opt" }, "Subject", subj),
+          h("label", { class: "pp-opt" }, "Show", topSel), chk("showQ", "Show questions"), chk("names", "Show student names"),
+          h("button", { class: "btn gold", type: "button", onclick: () => window.print() }, "Print / Save as PDF")),
+        h("p", { class: "small muted", style: "margin:0" }, "Each subject prints on its own pages. Use it for paper discussion right after the exam.", " ", note)),
+      h("style", {}, `@page { size: A4; margin: 11mm 10mm 13mm; @bottom-center { content: "${t.code.replace(/"/g, "")} · Paper discussion · Page " counter(page) " of " counter(pages); font: 8pt Arial, sans-serif; color: #444; } }`),
+      out);
+    await load();
+  }, ["central", "zone", "campus"]);
 
   route(/^\/print\/(\d+)$/, async (view, id) => {
     const P = await GET(`/api/tests/${id}/paper`);

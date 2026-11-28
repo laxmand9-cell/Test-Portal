@@ -800,3 +800,26 @@ body.menu-open .scrim { z-index: 55 }
   .pr-weak li::before { grid-row: 1 } .pr-weak-t { grid-column: 2; grid-row: 1 } .pr-weak li .pr-acc { grid-column: 3; grid-row: 1 }
   .pr-weak li .pr-meter { grid-column: 2 / 4; grid-row: 2 } .pr-weak li > :last-child { grid-column: 2 / 4; grid-row: 3; justify-self: start }
 }
+
+/* ---- paper discussion report (screen + A4 print) */
+.dq-page { display: grid; gap: 10px }
+.dq-sum { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 1em; padding: 6px 0; border-bottom: 1.5px solid #000 }
+.dq-part h3 { font-size: 1.15em; margin: 12px 0 6px; padding: 4px 8px; background: #eef1f6; border-left: 4px solid #1b3a76 }
+.dq-part h3 span { font-weight: 400; font-size: .85em; color: #555 }
+.dq { border: 1px solid #c9ced8; border-radius: 6px; padding: 8px 10px; margin: 0 0 8px; display: grid; gap: 5px; break-inside: avoid; background: #fff; color: #111 }
+.dq-h { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: .95em }
+.dq-no { font-weight: 800; background: #1b3a76; color: #fff; border-radius: 4px; padding: 1px 7px }
+.dq-stat { color: #333 } .dq-stat.hot { font-weight: 800; color: #000; text-decoration: underline }
+.dq-key { margin-left: auto; font-weight: 700 }
+.dq-tags { font-size: .88em; color: #444 } .dq-lv { margin-left: 8px; border: 1px solid #999; border-radius: 3px; padding: 0 5px; font-size: .9em }
+.dq-common { font-size: .9em; font-weight: 600 }
+.dq-body { font-size: .92em; border-top: 1px dashed #ccc; padding-top: 5px }
+.dq-body img { max-width: 100%; max-height: 60mm }
+.dq-body img.qimp { max-height: none }
+.dq-people { display: grid; gap: 3px; font-size: .86em; border-top: 1px dashed #ccc; padding-top: 5px }
+.dq-names b { font-weight: 700 }
+.dq-p { white-space: nowrap; margin-right: 6px }
+.dq-out { color: #111 }
+@media (prefers-color-scheme: dark) { .dq-out .pp-page { background: #fff } }
+.dq, .dq-people, .dq-names { min-width: 0; max-width: 100% } .dq-names { overflow-wrap: anywhere }
+.dq-page { min-width: 0; overflow: hidden }

@@ -337,12 +337,20 @@ function cleanQuestion(b) {
     subject: str(b.subject, 40) || bad("Subject is needed."), chapter: str(b.chapter, 120), topic: str(b.topic, 120), qtype,
     difficulty: levelOf(b.difficulty), exam: str(b.exam, 40),
     text: str(b.text, 60000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 60000),
-    fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120),
+    fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120), bank: BANKS.includes(b.bank) ? b.bank : "portal",
   };
+}
+// three banks: JEE Main and JEE Advanced (ready-made sets, past-year and practice) and the Portal bank (papers imported from PDF, questions added here)
+const BANKS = ["main", "adv", "portal"];
+async function sortBanks() {
+  await run("UPDATE questions SET bank='portal' WHERE COALESCE(bank,'')='' AND (ref LIKE 'imp:%' OR COALESCE(ref,'')='') AND lower(COALESCE(exam,'')) NOT LIKE '%adv%'");
+  await run("UPDATE questions SET bank='adv' WHERE COALESCE(bank,'')='' AND lower(COALESCE(exam,'')) LIKE '%adv%'");
+  await run("UPDATE questions SET bank='main' WHERE COALESCE(bank,'')=''");
 }
 // filters: each of these may hold several values separated by "|" (e.g. chapter=Optics|Waves)
 function questionFilter(qy) {
   const where = ["1=1"], args = [];
+  if (BANKS.includes(qy.bank)) { where.push("bank=?"); args.push(qy.bank); }
   const many = (k, col = k, num = false) => {
     const vals = String(qy[k] || "").split("|").map(v => v.trim()).filter(Boolean).slice(0, 200);
     if (!vals.length) return;
@@ -368,12 +376,22 @@ app.get("/api/questions", auth, admin, wrap(async req => {
   const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, ${cols}, answer, fmt, source, year, exam
                    FROM questions WHERE ${w} ORDER BY ${req.query.order === "random" ? "RANDOM()" : "subject, chapter, year DESC, id"} LIMIT ${limit} OFFSET ${offset}`, ...args);
   if (full) rows.forEach(r => (r.options = JSON.parse(r.options || "[]")));
-  const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
-                   chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
-                   untagged: (await qa("SELECT DISTINCT subject FROM questions WHERE COALESCE(chapter,'')='' AND COALESCE(hidden,0)=0")).map(r => r.subject),
-                   papers: (await qa("SELECT source, MIN(id) AS f FROM questions WHERE ref LIKE 'imp:%' AND COALESCE(hidden,0)=0 GROUP BY source ORDER BY f DESC")).map(r => r.source),
-                   years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year),
-                   exams: (await qa("SELECT DISTINCT exam FROM questions WHERE exam != '' ORDER BY exam")).map(r => r.exam), levels: QLEVELS };
+  // lists for the filters, limited to the chosen bank (and past-year / practice) so every choice has questions behind it
+  const bw = ["COALESCE(hidden,0)=0"], ba = [];
+  if (BANKS.includes(req.query.bank)) { bw.push("bank=?"); ba.push(req.query.bank); }
+  if (req.query.pyq === "1") bw.push("(year IS NOT NULL OR COALESCE(exam,'') != '')");
+  if (req.query.pyq === "0") bw.push("(year IS NULL AND COALESCE(exam,'') = '')");
+  const B = bw.join(" AND ");
+  const facets = { subjects: (await qa(`SELECT subject, COUNT(*) AS n FROM questions WHERE ${B} GROUP BY subject ORDER BY subject`, ...ba)).map(r => r.subject),
+                   subject_counts: Object.fromEntries((await qa(`SELECT subject, COUNT(*) AS n FROM questions WHERE ${B} GROUP BY subject`, ...ba)).map(r => [r.subject, Number(r.n)])),
+                   chapters: await qa(`SELECT subject, chapter, COUNT(*) AS n FROM questions WHERE ${B} AND chapter != '' GROUP BY subject, chapter ORDER BY chapter`, ...ba),
+                   untagged: (await qa(`SELECT DISTINCT subject FROM questions WHERE ${B} AND COALESCE(chapter,'')=''`, ...ba)).map(r => r.subject),
+                   papers: (await qa(`SELECT source, MIN(id) AS f FROM questions WHERE ${B} AND ref LIKE 'imp:%' GROUP BY source ORDER BY f DESC`, ...ba)).map(r => r.source),
+                   years: (await qa(`SELECT DISTINCT year FROM questions WHERE ${B} AND year IS NOT NULL ORDER BY year DESC`, ...ba)).map(r => r.year),
+                   exams: (await qa(`SELECT DISTINCT exam FROM questions WHERE ${B} AND exam != '' ORDER BY exam`, ...ba)).map(r => r.exam), levels: QLEVELS,
+                   banks: Object.fromEntries((await qa("SELECT bank, COUNT(*) AS n FROM questions WHERE COALESCE(hidden,0)=0 GROUP BY bank")).map(r => [r.bank, Number(r.n)])),
+                   pyq_counts: BANKS.includes(req.query.bank) ? await q1(`SELECT SUM(CASE WHEN year IS NOT NULL OR COALESCE(exam,'') != '' THEN 1 ELSE 0 END) AS pyq,
+                     SUM(CASE WHEN year IS NULL AND COALESCE(exam,'') = '' THEN 1 ELSE 0 END) AS practice FROM questions WHERE bank=? AND COALESCE(hidden,0)=0`, req.query.bank) : null };
   return { rows, facets, offset, limit, matching: (await q1(`SELECT COUNT(*) AS n FROM questions WHERE ${w}`, ...args)).n, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };
 }));
 // change level (or exam) for many questions at once: either the ticked ids, or everything matching the filters
@@ -440,13 +458,13 @@ app.get("/api/questions/:id", auth, admin, wrap(async req => {
 }));
 app.post("/api/questions", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, exam)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source, q.exam) };
+  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, exam, bank)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source, q.exam, q.bank) };
 }));
 app.put("/api/questions/:id", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=?, exam=? WHERE id=?`,
-    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, q.exam, req.params.id);
+  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=?, exam=?, bank=? WHERE id=?`,
+    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, q.exam, q.bank, req.params.id);
   return { ok: true };
 }));
 app.delete("/api/questions/:id", auth, central, wrap(async req => {
@@ -456,9 +474,9 @@ app.delete("/api/questions/:id", auth, central, wrap(async req => {
 
 // ------------------------------------------------------------------ ready-made question sets shipped with the app (bank/*.json.gz)
 const PACKS = {
-  "jee-main-pyq-physics": { prefix: "jmp:", exam: "JEE Main", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
+  "jee-main-pyq-physics": { prefix: "jmp:", bank: "main", exam: "JEE Main", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
     note: "AIEEE 2002 to JEE Main 2026, chapter-wise, with solutions and figures." },
-  "chemistry": { prefix: "chm:", exam: "", file: "chemistry.json.gz", name: "Chemistry question bank",
+  "chemistry": { prefix: "chm:", bank: "main", exam: "", file: "chemistry.json.gz", name: "Chemistry question bank",
     note: "35 chapters (physical, organic, inorganic), single-correct, with figures; solutions where available." },
 };
 const packData = id => JSON.parse(require("zlib").gunzipSync(fs.readFileSync(path.join(__dirname, "bank", PACKS[id].file))).toString("utf8"));
@@ -486,6 +504,7 @@ app.post("/api/packs/:id/load", auth, central, wrap(async req => {
     }
     // questions added before the Exam field existed get it now
     await run("UPDATE questions SET exam=? WHERE ref LIKE ? AND (exam = '' OR exam IS NULL)", p.exam, p.prefix + "%");
+    await run("UPDATE questions SET bank=? WHERE ref LIKE ?", p.bank, p.prefix + "%");
   });
   await run("DELETE FROM settings WHERE key=?", "pack." + req.params.id);
   await run("INSERT INTO settings (key, value) VALUES (?, ?)", "pack." + req.params.id, String(Date.now()));
@@ -631,8 +650,8 @@ app.post("/api/tests/:id/import", auth, central, wrap(async req => {
           await run("DELETE FROM test_questions WHERE question_id=?", o.id); await run("DELETE FROM questions WHERE id=?", o.id);
         }
         const bankAns = sec.options === "1234" && /^[1-4]+$/.test(p.answer) ? [...p.answer].map(d => "ABCD"[d - 1]).join("") : p.answer;
-        const id = await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, ref, exam, hidden)
-                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, cap1(sec.subject), "", "", sec.qtype, "Medium", tag(p.img, p.w), "", "[]", bankAns,
+        const id = await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, ref, exam, hidden, bank)
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'portal')`, cap1(sec.subject), "", "", sec.qtype, "Medium", tag(p.img, p.w), "", "[]", bankAns,
                                  p.sol ? tag(p.sol, p.sw) : "", req.user.id, "html", label, ref, "", hidden);
         await run("DELETE FROM test_questions WHERE test_id=? AND qno=?", t.id, qno);
         await run("INSERT INTO test_questions (test_id, qno, question_id) VALUES (?,?,?)", t.id, qno, id);
@@ -1183,6 +1202,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   ({ q1, qa, run, insert, tx } = db);
   // questions saved with the old level names move to Easy / Medium / Difficult
   for (const [from, to] of Object.entries(LEVEL_MAP)) await run("UPDATE questions SET difficulty=? WHERE difficulty=?", to, from);
+  await sortBanks(); // questions from before the three banks get one
   // exits only warn by default: tests made while auto-submit was the default no longer submit
   if (!(await q1("SELECT 1 AS x FROM settings WHERE key='migr.exits-warn-only'"))) {
     await run("UPDATE tests SET max_exits=0");

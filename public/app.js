@@ -518,20 +518,26 @@
   // ================================================================ question bank
   const QT = { single: "Single correct", multi: "One or more correct", integer: "Integer", decimal: "Decimal" };
   const QLEVELS = ["Easy", "Medium", "Difficult"];
+  // ---- question bank: JEE Main bank / JEE Advanced bank (past-year or practice → subject → chapter) and the Portal bank (imported papers, own questions)
+  const BANK_TABS = [["main", "JEE Main bank"], ["adv", "JEE Advanced bank"], ["portal", "Portal bank"]];
+  const SUBJ_ORDER = ["physics", "chemistry", "mathematics", "maths", "biology", "botany", "zoology"];
+  const bankView = { bank: "main", pyq: "1", subject: "", chapter: "" };
   route(/^\/bank$/, async view => {
-    const sel = (id, label) => h("select", { id, "aria-label": label });
-    const subj = sel("qb-subject", "Subject"), chap = sel("qb-chapter", "Chapter"), exam = sel("qb-exam", "Exam"), yr = sel("qb-year", "Year");
+    const V = bankView;
+    const chap = h("select", { id: "qb-chapter", "aria-label": "Chapter" });
+    const yr = h("select", { id: "qb-year", "aria-label": "Year" });
+    const paper = h("select", { id: "qb-paper", "aria-label": "Imported paper" });
     const typ = h("select", { id: "qb-type", "aria-label": "Type" }, h("option", { value: "" }, "All types"), Object.entries(QT).map(([k, v]) => h("option", { value: k }, v)));
     const dif = h("select", { id: "qb-diff", "aria-label": "Level" }, h("option", { value: "" }, "Any level"), QLEVELS.map(d => h("option", {}, d)));
-    const paper = h("select", { id: "qb-paper", "aria-label": "Imported paper", hidden: true });
-    const pyq = h("select", { id: "qb-pyq", "aria-label": "Past-year questions" }, h("option", { value: "" }, "All questions"), h("option", { value: "1" }, "Past-year only"), h("option", { value: "0" }, "Practice only"));
     const size = h("select", { id: "qb-size", "aria-label": "Questions per page" }, [10, 15, 20].map(n => h("option", { value: n }, `${n} per page`)));
-    const q = h("input", { id: "qb-q", placeholder: "Search words, chapter or exam (e.g. 2023)", "aria-label": "Search" });
+    const q = h("input", { id: "qb-q", placeholder: "Search words, chapter or exam", "aria-label": "Search" });
+    const tabsBox = h("div", { class: "bank-tabs", role: "tablist" }), pyqBox = h("div", { class: "seg" }), subjBox = h("div", { class: "subj-pills" });
     const list = h("div", { class: "qlist" }), count = h("span", { class: "muted small" });
     const pager = h("div", { class: "pager" }), pagerTop = h("div", { class: "pager" });
     const ids = [];
     let page = 0, matching = 0;
-    const fill = (s, first, items, keep) => s.replaceChildren(h("option", { value: "" }, first), ...items.map(([v, t]) => h("option", { value: v, selected: String(v) === keep }, t)));
+    const fill = (sel, first, items, keep) => sel.replaceChildren(h("option", { value: "" }, first), ...items.map(([v, t]) => h("option", { value: v, selected: String(v) === String(keep) }, t)));
+    const nice = s => (/^math/i.test(s) ? "Maths" : s.charAt(0).toUpperCase() + s.slice(1).toLowerCase());
     function drawPager(box) {
       const pages = Math.max(1, Math.ceil(matching / +size.value));
       const go = p => { page = Math.min(Math.max(0, p), pages - 1); load(true); };
@@ -542,34 +548,47 @@
         h("button", { class: "btn ghost small", type: "button", disabled: page >= pages - 1, onclick: () => go(page + 1) }, "Next ›"));
       box.hidden = matching <= +size.value;
     }
+    const pick = (k, v) => { V[k] = v; if (k === "bank") { V.subject = ""; V.chapter = ""; V.pyq = v === "portal" ? "" : "1"; paper.value = ""; yr.value = ""; }
+      if (k === "pyq") { V.subject = ""; V.chapter = ""; yr.value = ""; } if (k === "subject") V.chapter = ""; load(false); };
     async function load(keepPage) {
       if (!keepPage) page = 0;
-      const n = +size.value;
-      const p = new URLSearchParams(Object.entries({ subject: subj.value, chapter: chap.value, exam: exam.value, qtype: typ.value, difficulty: dif.value, year: yr.value, pyq: pyq.value, paper: paper.value, q: q.value.trim() }).filter(([, v]) => v));
+      const n = +size.value, jee = V.bank !== "portal";
+      const p = new URLSearchParams(Object.entries({ bank: V.bank, pyq: jee ? V.pyq : "", subject: V.subject, chapter: V.chapter, qtype: typ.value, difficulty: dif.value,
+        year: jee && V.pyq === "1" ? yr.value : "", paper: jee ? "" : paper.value, q: q.value.trim() }).filter(([, v]) => v));
       p.set("limit", n); p.set("offset", page * n); p.set("full", "1");
-      const r = await GET("/api/questions?" + p);
-      const sv = subj.value;
-      fill(subj, "All subjects", r.facets.subjects.map(s => [s, s]), subj.value);
-      fill(chap, "All chapters", [...r.facets.chapters.filter(c => !sv || c.subject === sv).map(c => [c.chapter, c.chapter]),
-        ...((r.facets.untagged || []).some(s => !sv || s === sv) ? [["__none", "Not tagged yet"]] : [])], chap.value);
-      fill(paper, "All imported papers", (r.facets.papers || []).map(s => [s, s]), paper.value); paper.hidden = !(r.facets.papers || []).length;
-      fill(exam, "All exams", r.facets.exams.map(e => [e, e]), exam.value);
-      fill(yr, "Any year", r.facets.years.map(y => [y, y]), yr.value);
+      const r = await GET("/api/questions?" + p), F = r.facets;
+      tabsBox.replaceChildren(...BANK_TABS.map(([k, t]) => h("button", { type: "button", role: "tab", class: V.bank === k ? "on" : "", "aria-selected": String(V.bank === k), onclick: () => pick("bank", k) },
+        h("b", {}, t), h("span", {}, `${(F.banks || {})[k] || 0} questions`))));
+      const pc = F.pyq_counts || {};
+      pyqBox.hidden = !jee;
+      pyqBox.replaceChildren(...[["1", "PYQ", pc.pyq], ["0", "Non-PYQ", pc.practice], ["", "All", (pc.pyq || 0) + (pc.practice || 0)]].map(([v, t, c]) =>
+        h("button", { type: "button", class: V.pyq === v ? "on" : "", "aria-pressed": String(V.pyq === v), onclick: () => pick("pyq", v) }, t, h("small", {}, ` ${c || 0}`))));
+      const subs = F.subjects.slice().sort((a, b) => (SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99) || a.localeCompare(b));
+      const tot = Object.values(F.subject_counts || {}).reduce((a, b) => a + b, 0);
+      subjBox.replaceChildren(...[["", "All subjects", tot], ...subs.map(x => [x, nice(x), (F.subject_counts || {})[x] || 0])].map(([v, t, c]) =>
+        h("button", { type: "button", class: "sp" + (V.subject.toLowerCase() === v.toLowerCase() ? " on" : ""), onclick: () => pick("subject", v) }, t, h("small", {}, c))));
+      const sv = V.subject.toLowerCase();
+      fill(chap, V.subject ? `All ${nice(V.subject)} chapters` : "All chapters", [...F.chapters.filter(c => !sv || c.subject.toLowerCase() === sv).map(c => [c.chapter, `${c.chapter} (${c.n})`]),
+        ...((F.untagged || []).some(x => !sv || x.toLowerCase() === sv) ? [["__none", "Not tagged yet"]] : [])], V.chapter);
+      fill(paper, "All imported papers", (F.papers || []).map(x => [x, x]), paper.value); paper.hidden = jee || !(F.papers || []).length;
+      fill(yr, "Any year", F.years.map(y => [y, y]), yr.value); yr.hidden = !jee || V.pyq !== "1";
       matching = r.matching;
       ids.length = 0; ids.push(...r.rows.map(x => x.id));
-      count.textContent = matching ? `${matching} question${matching === 1 ? "" : "s"} · showing ${page * n + 1}–${page * n + r.rows.length}` + (matching !== r.total ? ` · ${r.total} in the bank` : "") : "";
-      show(list, r.rows.length ? r.rows.map((x, i) => questionCard(x, page * n + i + 1, ids)) : h("p", { class: "empty" }, r.total ? "No questions match these filters." : "The question bank is empty. Add a ready-made set above, or add your own question."));
+      count.textContent = matching ? `${matching} question${matching === 1 ? "" : "s"} · showing ${page * n + 1}–${page * n + r.rows.length}` : "";
+      const emptyMsg = !((F.banks || {})[V.bank]) ? (V.bank === "adv" ? "The JEE Advanced bank is empty for now." : V.bank === "portal" ? "No questions here yet. Questions from papers you import (a test's Questions tab → Import from PDF) and questions you add yourself appear here." : "This bank is empty. Add a ready-made set above.") : "No questions match these filters.";
+      show(list, r.rows.length ? r.rows.map((x, i) => questionCard(x, page * n + i + 1, ids)) : h("p", { class: "empty" }, emptyMsg));
       drawPager(pager); drawPager(pagerTop);
-      if (keepPage) list.scrollIntoView({ block: "start", behavior: "smooth" });
+      if (keepPage === true) list.scrollIntoView({ block: "start", behavior: "smooth" });
     }
-    [subj, chap, exam, typ, dif, yr, pyq, paper, size].forEach(s => (s.onchange = () => load(false)));
+    chap.onchange = () => { V.chapter = chap.value; load("chap"); };
+    [yr, paper, typ, dif, size].forEach(x => (x.onchange = () => load(false)));
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => load(false), 300); };
-    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Choose a bank, then past-year or practice, subject and chapter.")),
       h("div", { class: "row" }, h("button", { class: "btn ghost", type: "button", onclick: () => findDuplicates(() => load(true)) }, "Find duplicates"),
-        h("a", { class: "btn gold", href: "#/bank/new" }, "Add question"))),
-      packsCard(() => load(false)),
-      h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif), h("div", { class: "row" }, exam, yr, pyq, paper, q),
-        h("div", { class: "row", style: "align-items:center" }, count, h("span", { class: "shrink" }, size)), pagerTop, list, pager));
+        h("a", { class: "btn gold", href: `#/bank/new` }, "Add question"))),
+      packsCard(() => load(false)), tabsBox,
+      h("div", { class: "card bank-card" }, h("div", { class: "row", style: "align-items:center" }, pyqBox, paper), subjBox,
+        h("div", { class: "row" }, chap, yr, typ, dif), h("div", { class: "row", style: "align-items:center" }, q, count, h("span", { class: "shrink" }, size)), pagerTop, list, pager));
     load(false);
   }, ["central"]);
 
@@ -595,6 +614,16 @@
       h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: close }, "✕")), info, list); load(); });
   }
 
+  // ready-made questions keep their options as "(A) …" lines at the end of the text: split them off so they can be clicked
+  function splitOptions(x) {
+    if ((x.options || []).some(Boolean) || x.fmt !== "html" || !(x.qtype === "single" || x.qtype === "multi")) return { stem: x.text, options: x.options || [] };
+    const t = x.text || "", at = t.search(/<p>\s*\((A|1)\)/);
+    if (at < 0) return { stem: t, options: [] };
+    const tail = t.slice(at), re = /<p>\s*\(([A-D1-4])\)\s*([\s\S]*?)<\/p>/g, found = [];
+    let m; while ((m = re.exec(tail))) found.push(m[2].trim());
+    if (found.length < 2 || found.length > 4 || tail.replace(re, "").trim()) return { stem: t, options: [] };
+    return { stem: t.slice(0, at), options: found };
+  }
   // options you can click (or a number you can type) to check the answer; "Show answer" reveals it
   function tryIt(x) {
     const box = h("div", { class: "try" }), fb = h("div", { class: "try-fb", "aria-live": "polite" });
@@ -620,10 +649,11 @@
       if (input) { input.disabled = false; input.value = ""; checkBtn.hidden = false; }
       if (checkBtn && mc) { checkBtn.hidden = false; checkBtn.disabled = true; }
     }
-    if (mc && x.options && x.options.some(Boolean)) {
+    const optList = splitOptions(x).options;
+    if (mc && optList.some(Boolean)) {
       const multi = x.qtype === "multi";
       if (multi) checkBtn = h("button", { class: "btn small", type: "button", disabled: true, onclick: () => mark(opts.filter(b => b.classList.contains("sel")).map(b => b.dataset.k).join("")) }, "Check");
-      opts = x.options.map((o, k) => o ? h("button", { type: "button", class: "opt", "data-k": L[k], "aria-pressed": "false", onclick: e => {
+      opts = optList.map((o, k) => o ? h("button", { type: "button", class: "opt", "data-k": L[k], "aria-pressed": "false", onclick: e => {
         if (done) return; const b = e.currentTarget;
         if (!multi) return mark(L[k]);
         b.classList.toggle("sel"); b.setAttribute("aria-pressed", String(b.classList.contains("sel")));
@@ -649,7 +679,7 @@
       h("div", { class: "qc-head" }, h("b", { class: "qc-no" }, `${no}.`),
         h("span", { class: "small muted qc-meta" }, [x.chapter, x.topic, QT[x.qtype]].filter(Boolean).join(" · ")),
         h("span", { class: "pill lv" + (QLEVELS.indexOf(x.difficulty) + 1) }, x.difficulty), x.source ? h("span", { class: "pill navy" }, x.source) : x.exam ? h("span", { class: "pill" }, x.exam) : null),
-      x.fmt === "html" ? richNode(x.text) : x.text ? h("div", { style: "white-space:pre-wrap" }, x.text) : null,
+      x.fmt === "html" ? richNode(splitOptions(x).stem) : x.text ? h("div", { style: "white-space:pre-wrap" }, x.text) : null,
       x.image ? h("img", { src: x.image, alt: `Question ${x.id}`, style: "max-width:100%;border-radius:4px" }) : null,
       tryIt(x),
       h("div", { class: "qc-foot" }, sol,
@@ -680,7 +710,7 @@
           h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: () => closeFn() }, "✕")),
         h("div", { class: "chips" }, [q.exam, q.chapter, q.topic, QT[q.qtype]].filter(Boolean).map(t => h("span", { class: "chip" }, t)),
           h("span", { class: "pill lv" + (QLEVELS.indexOf(q.difficulty) + 1) }, q.difficulty), q.source ? h("span", { class: "pill navy" }, q.source) : null),
-        q.fmt === "html" ? richNode(q.text) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null,
+        q.fmt === "html" ? richNode(splitOptions(q).stem) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null,
         q.image ? h("img", { src: q.image, alt: `Question ${q.id}`, style: "max-width:100%;border-radius:4px" }) : null,
         tryIt(q),
         q.solution ? h("details", {}, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : null,
@@ -726,6 +756,7 @@
     const qtype = h("select", { id: "q-type" }, Object.entries(QT).map(([k, v]) => h("option", { value: k, selected: qd.qtype === k }, v)));
     const diff = h("select", { id: "q-diff" }, QLEVELS.map(d => h("option", { selected: qd.difficulty === d }, d)));
     const exam = h("input", { id: "q-exam", value: qd.exam || "", list: "exam-list", maxlength: 40, placeholder: "e.g. JEE Main" });
+    const bank = h("select", { id: "q-bank" }, BANK_TABS.map(([k, t]) => h("option", { value: k, selected: (qd.bank || "portal") === k }, t)));
     const text = h("textarea", { id: "q-text", rows: 6 }, qd.text);
     let image = qd.image || "";
     const imgPrev = h("img", { alt: "Question image", style: "max-width:100%;border-radius:4px" });
@@ -755,14 +786,14 @@
     show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))), preview,
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
-        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value, fmt: qd.fmt || "", source: qd.source || "", exam: exam.value };
+        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value, fmt: qd.fmt || "", source: qd.source || "", bank: bank.value, exam: exam.value };
         try { if (isNew) { const r = await POST("/api/questions", body); toast("Question saved"); location.hash = `#/bank/${r.id}`; } else { await PUT(`/api/questions/${id}`, body); toast("Saved"); } }
         catch (x) { err.textContent = x.message; }
       } },
         h("datalist", { id: "subj-list" }, ["Physics", "Chemistry", "Mathematics", "Botany", "Zoology"].map(s => h("option", { value: s }))),
         h("div", { class: "row" }, field("Subject", subject), field("Chapter", chapter), field("Topic", topic, "Optional")),
         h("datalist", { id: "exam-list" }, ["JEE Main", "JEE Advanced", "NEET", "EAPCET", "Board"].map(s => h("option", { value: s }))),
-        h("div", { class: "row" }, field("Question type", qtype), field("Level", diff), field("Exam", exam, "Optional")),
+        h("div", { class: "row" }, field("Question type", qtype), field("Level", diff), field("Exam", exam, "Optional"), field("Bank", bank)),
         field("Question", text, "Type the question, or add an image of it below (or both)."),
         h("div", { class: "row" }, field("Question image", imgIn, "PNG or JPG, up to 2 MB"), rmImg), imgPrev,
         optBox, h("label", { class: "f" }, "Correct answer", ansHint, answer), field("Solution", solution, "Optional. Shown to students after results are published."), err,

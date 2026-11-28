@@ -49,8 +49,8 @@ const TABLE_NAMES = TABLES.map(t => t.split(" ")[0]);
 const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"], ["questions", "exam", "TEXT DEFAULT ''"],
   ["tests", "mode", "TEXT DEFAULT 'omr'"], ["tests", "duration", "INTEGER"], ["tests", "opens_at", "BIGINT"], ["tests", "closes_at", "BIGINT"],
   ["tests", "max_exits", "INTEGER DEFAULT 0"], ["attempts", "exits", "TEXT DEFAULT '[]'"],
-  ["questions", "hidden", "INTEGER DEFAULT 0"]];
-const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
+  ["questions", "hidden", "INTEGER DEFAULT 0"], ["questions", "bank", "TEXT DEFAULT ''"]];
+const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_bank ON questions (bank, subject)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
 const PG_NOW = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')";
 
 // PostgreSQL error -> the same messages the SQLite backend gives, so callers handle one kind

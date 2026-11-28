@@ -1876,7 +1876,7 @@
       };
       drawIssues();
       const next = st.rows.find(x => x !== r && x.status === "REVIEW");
-      reshow(view, h("div", { class: "head" }, h("div", {}, h("h2", {}, `Roll ${r.roll}`), h("p", { class: "sub small" }, `${s ? s.name : "Unknown student"} · ${r.source}`)),
+      show(review, h("div", { class: "head" }, h("div", {}, h("h2", {}, `Roll ${r.roll}`), h("p", { class: "sub small" }, `${s ? s.name : "Unknown student"} · ${r.source}`)),
         h("button", { class: "btn small ghost", type: "button", onclick: () => { review.hidden = true; split.classList.remove("open"); st.sel = null; draw(); } }, "Close")),
         h("p", { class: "small muted" }, "Green: read as marked. Orange: doubtful. Red box: question to check."), cv, list,
         next ? h("div", {}, h("button", { class: "btn small", type: "button", onclick: () => openReview(next) }, "Next sheet to check ›")) : null);

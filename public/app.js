@@ -1723,7 +1723,7 @@
       let svg;
       try { await need("qrcode"); svg = SH.sheetSvg(O.getLayout(rep.test.sheet), { code: rep.test.code, name: rep.test.name }, { roll: (rep.student || {}).roll, name: (rep.student || {}).name }, rep.detail); }
       catch (e) { toast("This sheet could not be drawn."); return; }
-      const online = /online/i.test(rep.source || "");
+      const online = false;
       wideModal((b, close) => b.append(
         h("div", { class: "qv-head" }, h("b", {}, online ? "Your answers on an OMR sheet" : "Your OMR sheet"), h("span", { style: "flex:1" }),
           h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: close }, "✕")),
@@ -1734,7 +1734,7 @@
           : "Drawn from what the scanner read on your sheet. If you think a bubble was read wrongly, tell your campus office: they keep your paper sheet and can check it.")));
     }
     show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, rep.test.name), h("p", { class: "sub" }, `${rep.test.code} · ${fmtDate(rep.test.test_date)} · ${rep.test.sheet_title}`)),
-        rep.test.sheet ? h("button", { class: "btn ghost small", type: "button", onclick: openSheet }, "View OMR sheet") : null),
+        rep.test.sheet && !/online/i.test(rep.source || "") ? h("button", { class: "btn ghost small", type: "button", onclick: openSheet }, "View OMR sheet") : null),
       h("div", { class: "stats" }, h("div", { class: "stat gold" }, h("b", {}, `${rep.total} / ${rep.max}`), h("span", {}, `${pct}% of full marks`)),
         h("div", { class: "stat" }, h("b", {}, `${rep.rank_batch} / ${rep.rank_batch_of}`), h("span", {}, "Rank in batch")),
         h("div", { class: "stat" }, h("b", {}, `${rep.rank_campus} / ${rep.rank_campus_of}`), h("span", {}, "Rank in campus")),

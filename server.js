@@ -688,6 +688,73 @@ async function studentReport(t, studentId) {
     detail: s.detail.map(d => ({ ...d, question: linked[d.q] || null })) };
 }
 
+// ------------------------------------------------------------------ analysis dashboard: trend across tests
+// marks are cached per test and recomputed only when results or the key change
+const scoreCache = new Map();
+async function scoredCached(t) {
+  const sig = await q1("SELECT COUNT(*) AS n, MAX(uploaded_at) AS m FROM results WHERE test_id=?", t.id);
+  const key = `${sig.n}|${sig.m}|${t.answer_key}|${t.sheet}`;
+  const hit = scoreCache.get(t.id);
+  if (hit && hit.key === key) return hit.val;
+  const val = await scoreTest(t);
+  scoreCache.set(t.id, { key, val });
+  return val;
+}
+app.get("/api/dashboard", auth, admin, wrap(async req => {
+  const u = req.user, qy = req.query;
+  const scope = await campusScope(u);
+  const names = {};
+  for (const tbl of ["zones", "campuses", "batches"]) names[tbl] = new Map((await qa(`SELECT id, name FROM ${tbl}`)).map(r => [r.id, r.name]));
+  const batchInfo = new Map((await qa("SELECT b.id, b.level, b.campus_id, c.zone_id FROM batches b JOIN campuses c ON c.id=b.campus_id")).map(r => [r.id, r]));
+  const campusZone = new Map((await qa("SELECT id, zone_id FROM campuses")).map(r => [r.id, r.zone_id]));
+  const zoneId = Number(qy.zone_id) || null, campusId = Number(qy.campus_id) || null, level = String(qy.level || "");
+  const by = ["all", "zone", "campus", "batch"].includes(qy.by) ? qy.by : "all";
+  // tests that have results, oldest first
+  let tests = await qa(`SELECT t.* FROM tests t WHERE EXISTS (SELECT 1 FROM results r WHERE r.test_id=t.id) ORDER BY COALESCE(NULLIF(t.test_date,''), t.created_at), t.id`);
+  const allSheets = [...new Set(tests.map(t => t.sheet))];
+  if (qy.sheet) tests = tests.filter(t => t.sheet === qy.sheet);
+  if (qy.published === "1") tests = tests.filter(t => t.published);
+  const keep = s => inScope(scope, s.campus_id) && (!zoneId || s.zone_id === zoneId) && (!campusId || s.campus_id === campusId)
+    && (!level || (batchInfo.get(s.batch_id) || {}).level === level);
+  const gkey = s => (by === "zone" ? s.zone_id : by === "campus" ? s.campus_id : by === "batch" ? s.batch_id : 0);
+  const gname = id => (by === "zone" ? names.zones.get(id) : by === "campus" ? names.campuses.get(id) : by === "batch" ? names.batches.get(id) : "All students") || "?";
+  const outTests = [], groups = new Map(), subjects = new Set();
+  for (const t of tests) {
+    const { scored, max, layout } = await scoredCached(t);
+    const mine = scored.filter(keep);
+    if (!mine.length || !max) continue;
+    const smax = layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {});
+    const pct = s => (s.total / max) * 100;
+    const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+    const sub = {};
+    for (const k of Object.keys(smax)) { subjects.add(k); const v = mine.map(s => ((s.subjects || {})[k] || 0) / smax[k] * 100); sub[k] = +avg(v).toFixed(1); }
+    const pcts = mine.map(pct);
+    outTests.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet: t.sheet, max, n: mine.length,
+      avg_pct: +avg(pcts).toFixed(1), avg_marks: +avg(mine.map(s => s.total)).toFixed(1), top_pct: +Math.max(...pcts).toFixed(1),
+      above60: Math.round((pcts.filter(p => p >= 60).length / pcts.length) * 100), subjects: sub });
+    const byG = {};
+    for (const s of mine) (byG[gkey(s)] = byG[gkey(s)] || []).push(pct(s));
+    for (const [gid, arr] of Object.entries(byG)) {
+      const id = Number(gid);
+      if (!groups.has(id)) groups.set(id, { id, name: gname(id), zone_id: by === "campus" ? campusZone.get(id) : by === "batch" ? (batchInfo.get(id) || {}).zone_id : null,
+        campus_id: by === "batch" ? (batchInfo.get(id) || {}).campus_id : null, points: {} });
+      groups.get(id).points[t.id] = { avg_pct: +avg(arr).toFixed(1), n: arr.length };
+    }
+  }
+  const last = Number(qy.last) || 0;
+  const shown = last ? outTests.slice(-last) : outTests;
+  const ids = new Set(shown.map(t => t.id));
+  const gl = [...groups.values()].map(g => { for (const k of Object.keys(g.points)) if (!ids.has(Number(k))) delete g.points[k]; return g; })
+    .filter(g => Object.keys(g.points).length).sort((a, b) => a.name.localeCompare(b.name));
+  const options = {
+    zones: u.role === "central" ? [...names.zones].map(([id, name]) => ({ id, name })) : [],
+    campuses: (await qa(`SELECT c.id, c.name, c.zone_id FROM campuses c WHERE ${inList("c.id", scope)} ORDER BY c.name`)),
+    levels: [...new Set([...batchInfo.values()].map(b => b.level).filter(Boolean))].sort(),
+    sheets: allSheets.map(k => ({ id: k, title: (OMR.getLayout(k) || {}).title || k })),
+  };
+  return { by, tests: shown, groups: gl, subjects: [...subjects], options, role: u.role };
+}));
+
 // ------------------------------------------------------------------ printed papers: heading settings and paper data
 const PAPER_KEYS = { institute: 120, tagline: 160, logo: 400_000, instructions: 4000 };
 async function paperSettings() {

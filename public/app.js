@@ -131,7 +131,7 @@
     $("#bar").hidden = false;
     const me = state.me;
     const items = me.role === "student" ? [["#/my", "My results"], ["#/account", "Account"]]
-      : [["#/", "Home"], ["#/tests", "Tests"], ["#/students", "Students"], ...(me.role === "central" ? [["#/bank", "Question bank"], ["#/structure", "Zones & batches"], ["#/admins", "Admins"]] : [["#/structure", "Campuses & batches"]]), ["#/account", "Account"]];
+      : [["#/", "Home"], ["#/tests", "Tests"], ["#/dashboard", "Analysis"], ["#/students", "Students"], ...(me.role === "central" ? [["#/bank", "Question bank"], ["#/structure", "Zones & batches"], ["#/admins", "Admins"]] : [["#/structure", "Campuses & batches"]]), ["#/account", "Account"]];
     $("#nav").replaceChildren(...items.map(([href, t]) => h("a", { href, class: ("#" + hash === href || (href !== "#/" && ("#" + hash).startsWith(href))) ? "on" : "" }, t)));
     const place = me.role === "zone" ? ` · ${me.zone}` : me.role === "campus" ? ` · ${me.campus}` : me.role === "student" ? ` · ${me.roll}` : "";
     $("#who").textContent = `${me.name || me.username} (${ROLE[me.role]}${place})`;
@@ -773,6 +773,134 @@
       h("div", { class: "card" }, h("p", { class: "small", style: "margin:0" }, `${t.linked.length} of ${idx.length} questions are picked from the question bank; their answers are filled in above automatically. `,
         h("a", { href: `#/tests/${t.id}/questions` }, "Pick questions"))));
   }
+
+
+  // ================================================================ analysis dashboard
+  const SERIES = ["#257de0", "#f47230", "#00b894", "#f2a600", "#ee7fac", "#008a17", "#6a4ce2", "#ec4647"];
+  const SERIES_DARK = ["#338ced", "#e76624", "#00a888", "#d28e05", "#e24d8b", "#0aac23", "#9887ef", "#eb6263"];
+  const seriesColor = i => (matchMedia("(prefers-color-scheme: dark)").matches ? SERIES_DARK : SERIES)[i % 8];
+  const svgEl = (tag, attrs, text) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  // line chart of percentages across tests, with crosshair tooltip and legend
+  function lineChart({ labels, sub, series, height = 300, title }) {
+    const W = 860, H = height, L = 44, R = 110, T = 14, B = 44;
+    const n = labels.length;
+    const x = i => (n === 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (n - 1));
+    const vals = series.flatMap(s => s.values.filter(v => v != null));
+    const lo = Math.max(0, Math.floor((Math.min(...vals, 100) - 5) / 10) * 10), hi = Math.min(100, Math.ceil((Math.max(...vals, 0) + 5) / 10) * 10);
+    const y = v => T + ((hi - v) * (H - T - B)) / (hi - lo || 1);
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "dash-chart", role: "img", "aria-label": title || "Trend of average percentage across tests" });
+    for (let v = lo; v <= hi; v += hi - lo > 40 ? 20 : 10) svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }), svgEl("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, `${v}%`));
+    const every = Math.ceil(n / 12);
+    labels.forEach((lab, i) => { if (i % every === 0 || i === n - 1) { svg.append(svgEl("text", { x: x(i), y: H - 24, "text-anchor": "middle", class: "axis" }, lab)); if (sub && sub[i]) svg.append(svgEl("text", { x: x(i), y: H - 10, "text-anchor": "middle", class: "axis small" }, sub[i])); } });
+    const ends = [];
+    series.forEach(s => {
+      if (s.hidden) return;
+      let d = "", pen = false;
+      s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i)},${y(v)} `; pen = true; });
+      svg.append(svgEl("path", { d, class: "ln" + (s.dashed ? " dashed" : ""), stroke: s.color }));
+      s.values.forEach((v, i) => { if (v != null) svg.append(svgEl("circle", { cx: x(i), cy: y(v), r: 4, fill: s.color, class: "pt" })); });
+      const li = s.values.map((v, i) => (v != null ? i : -1)).filter(i => i >= 0).pop();
+      if (li != null && li >= 0) ends.push({ s, yv: y(s.values[li]), x: x(li) });
+    });
+    if (series.filter(s => !s.hidden).length <= 4) { // direct labels at line ends, nudged apart
+      ends.sort((a, b) => a.yv - b.yv);
+      for (let i = 1; i < ends.length; i++) if (ends[i].yv - ends[i - 1].yv < 14) ends[i].yv = ends[i - 1].yv + 14;
+      ends.forEach(e => svg.append(svgEl("text", { x: W - R + 8, y: e.yv + 4, class: "endlab" }, e.s.name.length > 14 ? e.s.name.slice(0, 13) + "…" : e.s.name)));
+    }
+    const cross = svgEl("line", { y1: T, y2: H - B, class: "cross", visibility: "hidden" });
+    const hit = svgEl("rect", { x: L - 10, y: 0, width: W - L - R + 20, height: H, fill: "transparent" });
+    svg.append(cross, hit);
+    const tip = h("div", { class: "dash-tip", hidden: true });
+    const box = h("div", { class: "dash-chartbox" }, svg, tip);
+    hit.addEventListener("mousemove", e => {
+      const r = svg.getBoundingClientRect(), px = ((e.clientX - r.left) / r.width) * W;
+      const i = Math.max(0, Math.min(n - 1, Math.round(n === 1 ? 0 : ((px - L) / (W - L - R)) * (n - 1))));
+      cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+      const rows = series.filter(s => !s.hidden && s.values[i] != null).sort((a, b) => b.values[i] - a.values[i]);
+      show(tip, h("b", {}, labels[i] + (sub && sub[i] ? ` · ${sub[i]}` : "")), rows.map(s => h("div", { class: "tr" }, h("i", { style: `background:${s.color}` }), h("span", {}, s.name), h("b", {}, `${s.values[i]}%`))));
+      tip.hidden = !rows.length;
+      const left = (x(i) / W) * r.width;
+      tip.style.left = Math.min(r.width - 220, Math.max(0, left + 12)) + "px";
+    });
+    hit.addEventListener("mouseleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+    return box;
+  }
+
+  route(/^\/dashboard$/, async view => {
+    let st = {}; try { st = JSON.parse(sessionStorage.getItem("tp-dash") || "{}"); } catch (e) { /* off */ }
+    st = Object.assign({ by: state.me.role === "central" ? "zone" : state.me.role === "zone" ? "campus" : "batch", zone_id: "", campus_id: "", level: "", sheet: "", last: "10", published: "" }, st);
+    const save = () => { try { sessionStorage.setItem("tp-dash", JSON.stringify(st)); } catch (e) { /* off */ } };
+    const body = h("div", { style: "display:grid;gap:16px" });
+    async function draw() {
+      save();
+      const p = new URLSearchParams(Object.entries(st).filter(([, v]) => v));
+      const r = await GET("/api/dashboard?" + p);
+      const o = r.options;
+      const seg = h("div", { class: "seg-row", role: "group", "aria-label": "Compare" }, [["all", "Whole institute"], ...(r.role === "central" ? [["zone", "Zones"]] : []), ...(r.role !== "campus" ? [["campus", "Campuses"]] : []), ["batch", "Batches"]]
+        .map(([v, t]) => h("button", { type: "button", class: "btn small " + (st.by === v ? "" : "ghost"), onclick: () => { st.by = v; draw(); } }, t)));
+      const sel = (id, label, first, items, k, after) => h("select", { id, "aria-label": label, onchange: e => { st[k] = e.target.value; if (after) after(); draw(); } },
+        h("option", { value: "" }, first), items.map(([v, t]) => h("option", { value: v, selected: String(st[k]) === String(v) }, t)));
+      const zs = o.zones.length ? sel("d-zone", "Zone", "All zones", o.zones.map(z => [z.id, z.name]), "zone_id", () => (st.campus_id = "")) : null;
+      const cs = r.role !== "campus" ? sel("d-campus", "Campus", "All campuses", o.campuses.filter(c => !st.zone_id || c.zone_id === +st.zone_id).map(c => [c.id, c.name]), "campus_id") : null;
+      const ls = sel("d-level", "Class", "All classes", o.levels.map(l => [l, /^\d+$/.test(l) ? `Class ${l}` : l]), "level");
+      const ps = sel("d-sheet", "Pattern", "All patterns", o.sheets.map(s => [s.id, s.title]), "sheet");
+      const lt = h("select", { id: "d-last", "aria-label": "Tests shown", onchange: e => { st.last = e.target.value; draw(); } }, [["10", "Last 10 tests"], ["20", "Last 20 tests"], ["", "All tests"]].map(([v, t]) => h("option", { value: v, selected: st.last === v }, t)));
+      const pub = h("label", { class: "pp-opt" }, h("input", { type: "checkbox", checked: st.published === "1", onchange: e => { st.published = e.target.checked ? "1" : ""; draw(); } }), "Published tests only");
+      const filters = h("div", { class: "card" }, h("div", { class: "row", style: "align-items:center" }, h("b", { class: "shrink" }, "Compare"), seg),
+        h("div", { class: "filters" }, zs, cs, ls, ps, lt, pub));
+      if (!r.tests.length) { show(body, filters, h("div", { class: "card" }, h("p", { class: "empty" }, "No marks yet for this selection. Results appear here once sheets are read or online tests are submitted."))); return; }
+      const T = r.tests, labels = T.map(t => t.code), sub = T.map(t => (t.test_date ? fmtDate(t.test_date).replace(/ \d{4}$/, "") : ""));
+      const lastT = T[T.length - 1], prevT = T[T.length - 2];
+      const delta = prevT ? +(lastT.avg_pct - prevT.avg_pct).toFixed(1) : null;
+      // groups: change from first to last test each group wrote
+      const gl = r.groups.map(g => { const pts = T.map(t => g.points[t.id]).filter(Boolean); const first = pts[0], last = pts[pts.length - 1];
+        const prev = pts[pts.length - 2]; return { ...g, change: pts.length > 1 ? +(last.avg_pct - first.avg_pct).toFixed(1) : null, recent: prev ? +(last.avg_pct - prev.avg_pct).toFixed(1) : null, latest: last.avg_pct }; });
+      const best = r.by !== "all" && gl.length > 1 ? gl.filter(g => g.change != null).sort((a, b) => b.change - a.change)[0] : null;
+      const arrow = v => (v > 0 ? "▲ " : v < 0 ? "▼ " : "");
+      const kpis = h("div", { class: "stats" },
+        h("div", { class: "stat" }, h("b", {}, T.length), h("span", {}, "Tests in this view")),
+        h("div", { class: "stat gold" }, h("b", {}, `${lastT.avg_pct}%`), h("span", {}, `Average in latest test (${lastT.code}, ${lastT.n} students)`)),
+        delta != null ? h("div", { class: "stat " + (delta >= 0 ? "ok" : "warn") }, h("b", {}, `${arrow(delta)}${delta > 0 ? "+" : ""}${delta}`), h("span", {}, `Points vs previous test (${prevT.code})`)) : null,
+        T.length > 1 ? (() => { const c = +(lastT.avg_pct - T[0].avg_pct).toFixed(1); return h("div", { class: "stat " + (c >= 0 ? "ok" : "warn") }, h("b", {}, `${arrow(c)}${c > 0 ? "+" : ""}${c}`), h("span", {}, `Points since ${T[0].code}`)); })() : null,
+        best && best.change > 0 ? h("div", { class: "stat ok" }, h("b", { style: "font-size:20px" }, best.name), h("span", {}, `Most improved: +${best.change} points`)) : null);
+      // chart series (8 max, in a fixed order; the rest are in the table)
+      const shownG = gl.slice(0, 8);
+      const series = r.by === "all" ? [{ name: "All students", color: seriesColor(0), values: T.map(t => t.avg_pct) }]
+        : [...shownG.map((g, i) => ({ name: g.name, color: seriesColor(i), values: T.map(t => (g.points[t.id] ? g.points[t.id].avg_pct : null)) })),
+          ...(gl.length > 1 ? [{ name: "Overall", color: "var(--fg)", dashed: true, values: T.map(t => t.avg_pct) }] : [])];
+      const legend = h("div", { class: "dash-legend" }, series.map(s => h("label", {}, h("input", { type: "checkbox", checked: true, onchange: e => { s.hidden = !e.target.checked; chartBox.replaceChildren(lineChart({ labels, sub, series })); } }),
+        h("i", { class: s.dashed ? "dash" : "", style: `background:${s.color}` }), s.name)));
+      const chartBox = h("div", {}, lineChart({ labels, sub, series }));
+      const what = { all: "the whole institute", zone: "each zone", campus: "each campus", batch: "each batch" }[r.by];
+      const chartCard = h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, `Average % in each test — ${what}`),
+        h("span", { class: "small muted" }, "Marks as % of the test's maximum, so different tests can be compared")), legend, chartBox,
+        gl.length > 8 ? h("p", { class: "small muted", style: "margin:0" }, `The chart shows the first 8 of ${gl.length}. All are in the table below.`) : null);
+      // table: groups x tests
+      const drill = g => { if (r.by === "zone") { st.by = "campus"; st.zone_id = String(g.id); st.campus_id = ""; draw(); } else if (r.by === "campus") { st.by = "batch"; st.campus_id = String(g.id); draw(); } };
+      const cell = v => (v ? h("td", { class: "num" }, `${v.avg_pct}%`, h("div", { class: "small muted" }, `${v.n} st.`)) : h("td", { class: "num muted" }, "—"));
+      const chg = v => h("td", { class: "num" }, v == null ? "—" : h("span", { class: "pill " + (v >= 0 ? "ok" : "bad") }, `${arrow(v)}${v > 0 ? "+" : ""}${v}`));
+      const rowsT = (r.by === "all" ? [{ name: "All students", points: Object.fromEntries(T.map(t => [t.id, { avg_pct: t.avg_pct, n: t.n }])), change: T.length > 1 ? +(lastT.avg_pct - T[0].avg_pct).toFixed(1) : null, recent: delta }] : gl);
+      const table = h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Test by test"), r.by === "zone" || r.by === "campus" ? h("span", { class: "small muted" }, `Click a ${r.by} to see its ${r.by === "zone" ? "campuses" : "batches"}`) : null),
+        h("div", { class: "tablebox" }, h("table", { class: "dash-table" },
+          h("thead", {}, h("tr", {}, h("th", {}, { all: "", zone: "Zone", campus: "Campus", batch: "Batch" }[r.by]), T.map((t, i) => h("th", { class: "num", title: t.name }, t.code, h("div", { class: "small" }, sub[i]))), h("th", { class: "num" }, "Since first"), h("th", { class: "num" }, "Vs previous"))),
+          h("tbody", {}, rowsT.map(g => h("tr", { tabindex: r.by === "zone" || r.by === "campus" ? 0 : null, onclick: () => drill(g), onkeydown: e => e.key === "Enter" && drill(g) },
+            h("td", {}, h("b", {}, g.name)), T.map(t => cell(g.points[t.id])), chg(g.change), chg(g.recent)))))));
+      // subjects
+      const subjCard = r.subjects.length > 1 ? h("div", { class: "card" }, h("h2", {}, "Subjects — average % (this selection)"),
+        lineChart({ labels, sub, height: 240, title: "Subject averages across tests", series: r.subjects.map((k, i) => ({ name: k.charAt(0) + k.slice(1).toLowerCase(), color: seriesColor(i), values: T.map(t => (t.subjects[k] != null ? t.subjects[k] : null)) })) })) : null;
+      // tests list
+      const testsCard = h("div", { class: "card" }, h("h2", {}, "Tests"), h("div", { class: "tablebox" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Test", "Date", "Students", "Average", "Top score", "60% or more"].map(x => h("th", {}, x)))),
+        h("tbody", {}, [...T].reverse().map(t => h("tr", { tabindex: 0, onclick: () => (location.hash = `#/tests/${t.id}`), onkeydown: e => e.key === "Enter" && (location.hash = `#/tests/${t.id}`) },
+          h("td", {}, h("b", {}, t.code), " ", t.name), h("td", {}, fmtDate(t.test_date)), h("td", { class: "num" }, t.n), h("td", { class: "num" }, `${t.avg_pct}% (${t.avg_marks}/${t.max})`), h("td", { class: "num" }, `${t.top_pct}%`), h("td", { class: "num" }, `${t.above60}% of students`)))))));
+      const crumbs = [];
+      if (st.zone_id) crumbs.push(h("button", { class: "link", type: "button", onclick: () => { st.zone_id = ""; st.campus_id = ""; st.by = r.role === "central" ? "zone" : st.by; draw(); } }, "All zones"), " › ", (o.zones.find(z => z.id === +st.zone_id) || {}).name || "");
+      if (st.campus_id) crumbs.push(" › ", (o.campuses.find(c => c.id === +st.campus_id) || {}).name || "");
+      show(body, filters, crumbs.length ? h("p", { class: "small", style: "margin:0" }, crumbs) : null, kpis, chartCard, table, subjCard, testsCard);
+    }
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Analysis"), h("p", { class: "sub" }, "How marks are moving from test to test, for the whole institute, each zone, campus or batch."))), body);
+    await draw();
+  }, ["central", "zone", "campus"]);
 
   // ================================================================ printed papers
   // heading used on every printed paper: logo, institute name, a second line, default instructions

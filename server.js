@@ -350,11 +350,13 @@ function questionFilter(qy) {
     args.push(...vals.map(v => (num ? Number(v) || 0 : col.startsWith("lower(") ? str(v, 120).toLowerCase() : str(v, 120))));
   };
   if (qy.hidden !== "1") where.push("COALESCE(hidden,0)=0");
+  if (qy.chapter === "__none") { where.push("COALESCE(chapter,'')=''"); qy = { ...qy, chapter: "" }; }
+  if (qy.paper) { where.push("source=? AND ref LIKE 'imp:%'"); args.push(str(qy.paper, 60)); }
   many("subject", "lower(subject)"); many("chapter"); many("qtype"); many("difficulty"); many("exam"); many("year", "year", true);
   const ex = String(qy.exclude || "").split(",").map(Number).filter(Boolean).slice(0, 500);
   if (ex.length) { where.push(`id NOT IN (${ex.map(() => "?").join(",")})`); args.push(...ex); }
-  if (qy.pyq === "1") where.push("source != ''");
-  if (qy.pyq === "0") where.push("(source = '' OR source IS NULL)");
+  if (qy.pyq === "1") where.push("(year IS NOT NULL OR COALESCE(exam,'') != '')");
+  if (qy.pyq === "0") where.push("(year IS NULL AND COALESCE(exam,'') = '')");
   if (qy.q) { where.push("(text LIKE ? OR topic LIKE ? OR chapter LIKE ? OR source LIKE ?)"); const l = `%${str(qy.q, 60)}%`; args.push(l, l, l, l); }
   return { w: where.join(" AND "), args };
 }
@@ -368,6 +370,8 @@ app.get("/api/questions", auth, admin, wrap(async req => {
   if (full) rows.forEach(r => (r.options = JSON.parse(r.options || "[]")));
   const facets = { subjects: (await qa("SELECT DISTINCT subject FROM questions ORDER BY subject")).map(r => r.subject),
                    chapters: await qa("SELECT DISTINCT subject, chapter FROM questions WHERE chapter != '' ORDER BY chapter"),
+                   untagged: (await qa("SELECT DISTINCT subject FROM questions WHERE COALESCE(chapter,'')='' AND COALESCE(hidden,0)=0")).map(r => r.subject),
+                   papers: (await qa("SELECT source, MIN(id) AS f FROM questions WHERE ref LIKE 'imp:%' AND COALESCE(hidden,0)=0 GROUP BY source ORDER BY f DESC")).map(r => r.source),
                    years: (await qa("SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC")).map(r => r.year),
                    exams: (await qa("SELECT DISTINCT exam FROM questions WHERE exam != '' ORDER BY exam")).map(r => r.exam), levels: QLEVELS };
   return { rows, facets, offset, limit, matching: (await q1(`SELECT COUNT(*) AS n FROM questions WHERE ${w}`, ...args)).n, total: (await q1("SELECT COUNT(*) AS n FROM questions")).n };

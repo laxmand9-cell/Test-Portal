@@ -481,6 +481,7 @@
     const subj = sel("qb-subject", "Subject"), chap = sel("qb-chapter", "Chapter"), exam = sel("qb-exam", "Exam"), yr = sel("qb-year", "Year");
     const typ = h("select", { id: "qb-type", "aria-label": "Type" }, h("option", { value: "" }, "All types"), Object.entries(QT).map(([k, v]) => h("option", { value: k }, v)));
     const dif = h("select", { id: "qb-diff", "aria-label": "Level" }, h("option", { value: "" }, "Any level"), QLEVELS.map(d => h("option", {}, d)));
+    const paper = h("select", { id: "qb-paper", "aria-label": "Imported paper", hidden: true });
     const pyq = h("select", { id: "qb-pyq", "aria-label": "Past-year questions" }, h("option", { value: "" }, "All questions"), h("option", { value: "1" }, "Past-year only"), h("option", { value: "0" }, "Practice only"));
     const size = h("select", { id: "qb-size", "aria-label": "Questions per page" }, [10, 15, 20].map(n => h("option", { value: n }, `${n} per page`)));
     const q = h("input", { id: "qb-q", placeholder: "Search words, chapter or exam (e.g. 2023)", "aria-label": "Search" });
@@ -502,12 +503,14 @@
     async function load(keepPage) {
       if (!keepPage) page = 0;
       const n = +size.value;
-      const p = new URLSearchParams(Object.entries({ subject: subj.value, chapter: chap.value, exam: exam.value, qtype: typ.value, difficulty: dif.value, year: yr.value, pyq: pyq.value, q: q.value.trim() }).filter(([, v]) => v));
+      const p = new URLSearchParams(Object.entries({ subject: subj.value, chapter: chap.value, exam: exam.value, qtype: typ.value, difficulty: dif.value, year: yr.value, pyq: pyq.value, paper: paper.value, q: q.value.trim() }).filter(([, v]) => v));
       p.set("limit", n); p.set("offset", page * n); p.set("full", "1");
       const r = await GET("/api/questions?" + p);
       const sv = subj.value;
       fill(subj, "All subjects", r.facets.subjects.map(s => [s, s]), subj.value);
-      fill(chap, "All chapters", r.facets.chapters.filter(c => !sv || c.subject === sv).map(c => [c.chapter, c.chapter]), chap.value);
+      fill(chap, "All chapters", [...r.facets.chapters.filter(c => !sv || c.subject === sv).map(c => [c.chapter, c.chapter]),
+        ...((r.facets.untagged || []).some(s => !sv || s === sv) ? [["__none", "Not tagged yet"]] : [])], chap.value);
+      fill(paper, "All imported papers", (r.facets.papers || []).map(s => [s, s]), paper.value); paper.hidden = !(r.facets.papers || []).length;
       fill(exam, "All exams", r.facets.exams.map(e => [e, e]), exam.value);
       fill(yr, "Any year", r.facets.years.map(y => [y, y]), yr.value);
       matching = r.matching;
@@ -517,13 +520,13 @@
       drawPager(pager); drawPager(pagerTop);
       if (keepPage) list.scrollIntoView({ block: "start", behavior: "smooth" });
     }
-    [subj, chap, exam, typ, dif, yr, pyq, size].forEach(s => (s.onchange = () => load(false)));
+    [subj, chap, exam, typ, dif, yr, pyq, paper, size].forEach(s => (s.onchange = () => load(false)));
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => load(false), 300); };
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Questions here can be attached to a test, and their answers fill the answer key.")),
       h("div", { class: "row" }, h("button", { class: "btn ghost", type: "button", onclick: () => findDuplicates(() => load(true)) }, "Find duplicates"),
         h("a", { class: "btn gold", href: "#/bank/new" }, "Add question"))),
       packsCard(() => load(false)),
-      h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif), h("div", { class: "row" }, exam, yr, pyq, q),
+      h("div", { class: "card" }, h("div", { class: "row" }, subj, chap, typ, dif), h("div", { class: "row" }, exam, yr, pyq, paper, q),
         h("div", { class: "row", style: "align-items:center" }, count, h("span", { class: "shrink" }, size)), pagerTop, list, pager));
     load(false);
   }, ["central"]);

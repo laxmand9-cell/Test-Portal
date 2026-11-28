@@ -525,7 +525,7 @@ async function saveCbt(id, b, sheet) {
   const ms = v => (Number(v) > 0 ? Math.round(Number(v)) : null);
   const opens = ms(b.opens_at), closes = ms(b.closes_at);
   if (mode !== "omr" && opens && closes && closes <= opens) bad("The online test must close after it opens.");
-  const maxExits = b.max_exits === undefined || b.max_exits === null || b.max_exits === "" ? 5 : Math.max(0, Math.min(50, Math.round(Number(b.max_exits)) || 0));
+  const maxExits = b.max_exits === undefined || b.max_exits === null || b.max_exits === "" ? 0 : Math.max(0, Math.min(50, Math.round(Number(b.max_exits)) || 0));
   await run("UPDATE tests SET mode=?, duration=?, opens_at=?, closes_at=?, max_exits=? WHERE id=?", mode, duration, opens, closes, maxExits, id);
 }
 app.post("/api/tests", auth, central, wrap(async req => { const r = await saveTest(req, null); await saveCbt(r.id, req.body || {}, req.body.sheet); return r; }));
@@ -906,7 +906,7 @@ app.get("/api/my/cbt", auth, wrap(async req => {
   return { now: Date.now(), tests: out };
 }));
 // leaving the exam window: each exit is logged; after max_exits the next one submits the test (0 = never)
-const maxExitsOf = t => (t.max_exits == null ? 5 : Number(t.max_exits));
+const maxExitsOf = t => (t.max_exits == null ? 0 : Number(t.max_exits));
 const parseJ = (v, d) => { try { return JSON.parse(v || "") ?? d; } catch (e) { return d; } };
 function exitCount(att, state) {
   const server = parseJ(att.exits, []).filter(e => e.c).length;
@@ -1078,6 +1078,11 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   ({ q1, qa, run, insert, tx } = db);
   // questions saved with the old level names move to Easy / Medium / Difficult
   for (const [from, to] of Object.entries(LEVEL_MAP)) await run("UPDATE questions SET difficulty=? WHERE difficulty=?", to, from);
+  // exits only warn by default: tests made while auto-submit was the default no longer submit
+  if (!(await q1("SELECT 1 AS x FROM settings WHERE key='migr.exits-warn-only'"))) {
+    await run("UPDATE tests SET max_exits=0");
+    await run("INSERT INTO settings (key, value) VALUES ('migr.exits-warn-only', ?)", String(Date.now()));
+  }
   console.log(`Data is stored in ${db.kind === "postgres" ? "PostgreSQL (DATABASE_URL)" : db.file}`);
   if (!(await q1("SELECT id FROM users WHERE role='central' LIMIT 1"))) {
     const u = process.env.ADMIN_USER || "admin";

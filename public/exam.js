@@ -40,7 +40,7 @@
           h("li", {}, "For numerical questions, enter the answer using the on-screen keypad."),
           h("li", {}, "Sections are shown as tabs at the top. Click a section's name to see its questions."),
           t.max_exits > 0 ? h("li", {}, h("b", {}, "Do not leave the test window. "), `Switching to another app, tab or window, or minimising the browser, is counted as an exit. You get a warning each time. After ${t.max_exits} exits, the next exit submits your test automatically.`)
-            : h("li", {}, h("b", {}, "Do not leave the test window. "), "Every time you switch to another app, tab or window is recorded and shown to your teachers."),
+            : h("li", {}, h("b", {}, "Do not leave the test window. "), "Switching to another app, tab or window, or minimising the browser, is counted as an exit. Every exit is recorded and shown to your teachers, and from the 5th exit you will get a warning."),
           h("li", {}, "The screen is kept on during the test, so you can solve on paper. If your screen still goes dark by itself while you are not touching it, that is not counted as an exit. Do not switch the screen off yourself."),
           h("li", {}, "If your internet connection drops, do not close the page. Your answers are saved every few seconds, and you can log in again to continue. The clock keeps running.")),
         h("label", { class: "nta-agree" }, ok, " I have read and understood the instructions. I agree that I will not use any unfair means during this test."),
@@ -74,7 +74,8 @@
     // header
     const timeEl = h("b", { class: "nta-time" }, "--:--:--");
     const exitEl = h("span", { class: "nta-exits", hidden: true });
-    const drawExits = () => { const n = exitsNow(); exitEl.hidden = !n; exitEl.textContent = MAXX ? `Exits ${n} / ${MAXX}` : `Exits ${n}`; exitEl.classList.toggle("last", MAXX > 0 && n >= MAXX); };
+    const WARN_AT = 5;
+    const drawExits = () => { const n = exitsNow(); exitEl.hidden = !n; exitEl.textContent = MAXX ? `Exits ${n} / ${MAXX}` : `Exits ${n}`; exitEl.classList.toggle("last", MAXX > 0 ? n >= MAXX : n >= WARN_AT); };
     const subjEl = h("span", {});
     const top = h("header", { class: "nta-top" }, h("div", { class: "nta-logo" }, "TP"),
       h("div", { class: "nta-info" },
@@ -253,12 +254,13 @@
     }
     function exitWarning() {
       document.querySelectorAll(".nta-modal.exitwarn").forEach(m => m.remove());
-      const n = exitsNow(), last = MAXX > 0 && n >= MAXX;
-      const msg = !MAXX ? "Leaving the test window is recorded and shown to your teachers. Please stay on this screen."
+      const n = exitsNow(), last = MAXX > 0 ? n >= MAXX : n >= WARN_AT;
+      if (!MAXX && n < WARN_AT) { toast(`You left the test window (exit ${n}). Every exit is recorded.`); return; }
+      const msg = !MAXX ? `You have left the test window ${n} times. This is recorded and shown to your teachers. Stay on this screen until you submit.`
         : last ? `This was exit ${n} of ${MAXX}. If you leave the test window once more, your test will be submitted automatically.`
         : `You have used ${n} of ${MAXX} exits. After ${MAXX} exits, the next exit submits your test automatically.`;
       const box = h("div", { class: "nta-modal exitwarn" }, h("div", { class: "nta-modal-card" + (last ? " danger" : "") },
-        h("h2", {}, last ? "Final warning" : "You left the test window"), h("p", {}, msg),
+        h("h2", {}, !MAXX ? "Warning" : last ? "Final warning" : "You left the test window"), h("p", {}, msg),
         h("div", { class: "nta-modal-foot" }, b("green", "CONTINUE THE TEST", () => { box.remove(); try { if (document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); } catch (x) { /* ignore */ } }))));
       root.append(box);
     }

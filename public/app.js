@@ -1876,7 +1876,7 @@
     const cap = x => (x ? x[0].toUpperCase() + x.slice(1).toLowerCase() : "");
     const RES = { wrong: ["Wrong", "bad"], blank: ["Skipped", ""], partial: ["Partly right", "warn"] };
     let pref = {}; try { pref = JSON.parse(localStorage.getItem("tp-mistakes") || "{}"); } catch (e) { pref = {}; }
-    const keep = () => { try { localStorage.setItem("tp-mistakes", JSON.stringify({ type: fType.value, sub: fSub.value, test: fTest.value, hide: fHide.checked })); } catch (e) { /* ignore */ } };
+    const keep = () => { try { localStorage.setItem("tp-mistakes", JSON.stringify({ type: fType.value, sub: fSub.value, test: fTest.value, sort: fSort.value, hide: fHide.checked })); } catch (e) { /* ignore */ } };
     const sel = (id, label, opts, v) => h("select", { id, "aria-label": label }, opts.map(([k, t]) => h("option", { value: k, selected: v === k }, t)));
     const SUBJ_ORDER = ["physics", "chemistry", "mathematics", "maths", "biology", "botany", "zoology"];
     const subjects = [...new Set(r.items.map(i => cap(i.subject)))].sort((a, b) => ((SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99)) || a.localeCompare(b));
@@ -1885,6 +1885,7 @@
     const fSub = sel("mk-sub", "Subject", [["", "All subjects"], ...subjects.map(s => [s, s])], pref.sub || "");
     const fTest = sel("mk-test", "Test", [["", "All tests"], ...tests], pref.test || "");
     const fHide = h("input", { type: "checkbox", id: "mk-hide", checked: pref.hide !== false });
+    const fSort = sel("mk-sort", "Sort chapters", [["az", "Chapters A–Z"], ["most", "Most mistakes first"], ["recent", "Latest test first"]], pref.sort || "az");
     const box = h("div", { style: "display:grid;gap:16px" }), tiles = h("div", { class: "stats" });
     const qCache = new Map();
 
@@ -1942,6 +1943,13 @@
       const bySub = new Map();
       for (const m of ord) { const s = cap(m.subject), c = m.chapter || "", t = m.topic || "";
         if (!bySub.has(s)) bySub.set(s, new Map()); const chs = bySub.get(s); if (!chs.has(c)) chs.set(c, new Map()); const tps = chs.get(c); if (!tps.has(t)) tps.set(t, []); tps.get(t).push(m); }
+      // chapter order inside each subject
+      for (const [s, chs] of bySub) {
+        const meta = [...chs].map(([c, tps]) => { const all = [...tps.values()].flat(); return [c, tps, all.length, all.reduce((m, x) => (String(x.date) > m ? String(x.date) : m), "")]; });
+        meta.sort((a, b) => (!a[0] - !b[0]) || (fSort.value === "most" ? b[2] - a[2] : fSort.value === "recent" ? b[3].localeCompare(a[3]) : 0) || a[0].localeCompare(b[0]));
+        bySub.set(s, new Map(meta.map(([c, tps]) => [c, tps])));
+      }
+      ord.splice(0, ord.length, ...[...bySub.values()].flatMap(chs => [...chs.values()].flatMap(tps => [...tps.values()].flat())));
       const open = ord.length <= 25;
       const row = m => { const [label, tone] = RES[m.result] || [m.result, ""];
         return h("button", { class: "mk-row", type: "button", onclick: () => popup(ord, ord.indexOf(m)) },
@@ -1960,10 +1968,10 @@
       }),
       r.noQuestion.length ? h("p", { class: "small muted", style: "margin:0" }, `Not listed: ${r.noQuestion.map(x => `${x.count} from ${x.code}`).join(", ")}. Those tests have only an answer key in the portal, so their questions can't be shown.`) : null);
     }
-    [fType, fSub, fTest, fHide].forEach(f => (f.onchange = draw));
+    [fType, fSub, fTest, fSort, fHide].forEach(f => (f.onchange = draw));
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "My mistakes"), h("p", { class: "sub" }, "Every question you got wrong or skipped, in all your tests so far. Tap one to try it again and see the solution."))),
       tiles,
-      h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fTest,
+      h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fTest, fSort,
         h("label", { class: "imp-check" }, fHide, h("span", {}, "Hide the answer until I tap Show")))),
       box);
     draw();

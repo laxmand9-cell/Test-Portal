@@ -130,7 +130,7 @@
   function drawBar(hash) {
     $("#bar").hidden = false;
     const me = state.me;
-    const items = me.role === "student" ? [["#/my", "My results"], ["#/account", "Account"]]
+    const items = me.role === "student" ? [["#/my", "My results"], ["#/mistakes", "My mistakes"], ["#/account", "Account"]]
       : [["#/", "Home"], ["#/tests", "Tests"], ["#/dashboard", "Analysis"], ["#/students", "Students"], ...(me.role === "central" ? [["#/bank", "Question bank"], ["#/structure", "Zones & batches"], ["#/admins", "Admins"]] : [["#/structure", "Campuses & batches"]]), ["#/account", "Account"]];
     $("#nav").replaceChildren(...items.map(([href, t]) => h("a", { href, class: ("#" + hash === href || (href !== "#/" && ("#" + hash).startsWith(href))) ? "on" : "" }, t)));
     const place = me.role === "zone" ? ` · ${me.zone}` : me.role === "campus" ? ` · ${me.campus}` : me.role === "student" ? ` · ${me.roll}` : "";
@@ -1869,6 +1869,105 @@
       weakest ? h("p", { class: "small", style: "margin:0" }, "Focus area: ", h("b", {}, title(weakest.k)), ". Open a test and choose \"Wrong only\" to review those questions.") : null);
   }
   route(/^\/my\/(\d+)$/, async (view, id) => reportView(view, await GET(`/api/my/tests/${id}`), h("a", { href: "#/my" }, "‹ My results")), ["student"]);
+
+  // ================================================================ my mistakes: every wrong / skipped question till date, by subject → chapter → topic
+  route(/^\/mistakes$/, async view => {
+    const r = await GET("/api/my/mistakes");
+    const cap = x => (x ? x[0].toUpperCase() + x.slice(1).toLowerCase() : "");
+    const RES = { wrong: ["Wrong", "bad"], blank: ["Skipped", ""], partial: ["Partly right", "warn"] };
+    let pref = {}; try { pref = JSON.parse(localStorage.getItem("tp-mistakes") || "{}"); } catch (e) { pref = {}; }
+    const keep = () => { try { localStorage.setItem("tp-mistakes", JSON.stringify({ type: fType.value, sub: fSub.value, test: fTest.value, hide: fHide.checked })); } catch (e) { /* ignore */ } };
+    const sel = (id, label, opts, v) => h("select", { id, "aria-label": label }, opts.map(([k, t]) => h("option", { value: k, selected: v === k }, t)));
+    const SUBJ_ORDER = ["physics", "chemistry", "mathematics", "maths", "biology", "botany", "zoology"];
+    const subjects = [...new Set(r.items.map(i => cap(i.subject)))].sort((a, b) => ((SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99)) || a.localeCompare(b));
+    const tests = [...new Map(r.items.slice().reverse().map(i => [String(i.test_id), `${i.code} · ${i.test}`])).entries()];
+    const fType = sel("mk-type", "Which questions", [["", "Wrong and skipped"], ["wrong", "Wrong only"], ["blank", "Skipped only"], ["partial", "Partly right only"]], pref.type || "");
+    const fSub = sel("mk-sub", "Subject", [["", "All subjects"], ...subjects.map(s => [s, s])], pref.sub || "");
+    const fTest = sel("mk-test", "Test", [["", "All tests"], ...tests], pref.test || "");
+    const fHide = h("input", { type: "checkbox", id: "mk-hide", checked: pref.hide !== false });
+    const box = h("div", { style: "display:grid;gap:16px" }), tiles = h("div", { class: "stats" });
+    const qCache = new Map();
+
+    function popup(list, i) {
+      let cur = i, bodyEl, closeFn;
+      const keys = e => { if ($("#modal").hidden) { document.removeEventListener("keydown", keys); return; }
+        if (e.key === "ArrowRight") step(1); else if (e.key === "ArrowLeft") step(-1); else if (e.key === "Escape") closeFn(); };
+      const step = k => { if (cur + k >= 0 && cur + k < list.length) { cur += k; draw(); } };
+      async function draw() {
+        const m = list[cur], [label, tone] = RES[m.result] || [m.result, ""], k = `${m.test_id}:${m.qno}`;
+        const body = h("div", { class: "small muted" }, "Loading…");
+        const reveal = h("div", { class: "ra-facts" },
+          h("div", {}, h("span", {}, "Your answer"), h("b", { class: "mono" }, m.marked || "—")),
+          h("div", {}, h("span", {}, "Correct answer"), h("b", { class: "mono" }, m.key || "—")),
+          h("div", {}, h("span", {}, "Marks"), h("b", {}, `${m.marks > 0 ? "+" : ""}${m.marks}`)),
+          h("div", {}, h("span", {}, "Got it right"), h("b", {}, `${m.right_pct}% of students`)));
+        const solBox = h("div");
+        const hidden = fHide.checked;
+        const showBtn = h("button", { class: "btn small", type: "button", onclick: () => { showBtn.remove(); reveal.hidden = false; solBox.hidden = false; } }, "Show answer and solution");
+        reveal.hidden = hidden; solBox.hidden = hidden;
+        show(bodyEl,
+          h("div", { class: "qv-head" }, h("b", {}, `${m.code} · Q${m.qno}`), h("span", { class: "pill " + tone }, label), h("span", { class: "small muted" }, `${cur + 1} of ${list.length}`),
+            h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: () => closeFn() }, "✕")),
+          h("div", { class: "chips" }, [cap(m.subject), m.chapter, m.topic].filter(Boolean).map(t => h("span", { class: "chip" }, t)), m.level ? h("span", { class: "pill lv" + (QLEVELS.indexOf(m.level) + 1) }, m.level) : null),
+          body, hidden ? h("div", { class: "row" }, h("span", { class: "small muted" }, `Your answer: ${m.marked || "skipped"}`), showBtn) : null, reveal, solBox,
+          h("div", { class: "qv-foot" },
+            h("button", { class: "btn ghost small", type: "button", disabled: cur <= 0, onclick: () => step(-1) }, "‹ Previous"),
+            h("button", { class: "btn ghost small", type: "button", disabled: cur >= list.length - 1, onclick: () => step(1) }, "Next ›")));
+        bodyEl.parentElement.scrollTop = 0;
+        let q = qCache.get(k);
+        if (!q) { try { q = await GET(`/api/my/mistakes/${m.test_id}/${m.qno}`); qCache.set(k, q); } catch (e) { body.textContent = e.message; return; } }
+        if (list[cur] !== m) return;
+        show(body, q.fmt === "html" ? richNode(q.text) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null,
+          q.image ? h("img", { src: q.image, alt: `Question ${m.qno}`, style: "max-width:100%;border-radius:4px" }) : null,
+          q.options && q.options.some(Boolean) ? h("div", { class: "opts" }, q.options.map((o, j) => o ? h("div", {}, `(${"ABCD"[j]}) ${o}`) : null)) : null);
+        show(solBox, q.solution ? h("details", { open: true }, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : h("p", { class: "small muted" }, "No solution for this question."));
+      }
+      closeFn = wideModal((b, close) => { bodyEl = b; closeFn = close; draw(); });
+      document.addEventListener("keydown", keys);
+    }
+
+    function draw() {
+      keep();
+      const list = r.items.filter(i => (!fType.value || i.result === fType.value) && (!fSub.value || cap(i.subject) === fSub.value) && (!fTest.value || String(i.test_id) === fTest.value));
+      const cnt = k => list.filter(i => i.result === k).length;
+      show(tiles,
+        h("div", { class: "stat warn" }, h("b", {}, cnt("wrong")), h("span", {}, "Wrong")),
+        h("div", { class: "stat" }, h("b", {}, cnt("blank")), h("span", {}, "Skipped")),
+        cnt("partial") ? h("div", { class: "stat gold" }, h("b", {}, cnt("partial")), h("span", {}, "Partly right")) : null,
+        h("div", { class: "stat" }, h("b", {}, r.tests), h("span", {}, `Test${r.tests === 1 ? "" : "s"} so far`)));
+      if (!list.length) { show(box, h("div", { class: "card" }, h("p", { class: "empty" }, r.items.length ? "Nothing matches these choices." : "No mistakes to show yet. They appear here once your results are published."))); return; }
+      // order: subject → chapter → topic → newest test first
+      const ord = list.slice().sort((a, b) => ((SUBJ_ORDER.indexOf(a.subject.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.subject.toLowerCase()) + 1 || 99)) || cap(a.subject).localeCompare(cap(b.subject))
+        || (!a.chapter - !b.chapter) || a.chapter.localeCompare(b.chapter) || (!a.topic - !b.topic) || a.topic.localeCompare(b.topic) || String(b.date).localeCompare(String(a.date)) || a.qno - b.qno);
+      const bySub = new Map();
+      for (const m of ord) { const s = cap(m.subject), c = m.chapter || "", t = m.topic || "";
+        if (!bySub.has(s)) bySub.set(s, new Map()); const chs = bySub.get(s); if (!chs.has(c)) chs.set(c, new Map()); const tps = chs.get(c); if (!tps.has(t)) tps.set(t, []); tps.get(t).push(m); }
+      const open = ord.length <= 25;
+      const row = m => { const [label, tone] = RES[m.result] || [m.result, ""];
+        return h("button", { class: "mk-row", type: "button", onclick: () => popup(ord, ord.indexOf(m)) },
+          h("span", { class: "qdot " + tone }, m.qno), h("span", { class: "mk-main" }, h("b", {}, `${m.code}`), h("span", { class: "small muted" }, ` · ${fmtDate(m.date)}`)),
+          h("span", { class: "pill " + tone }, label), m.level ? h("span", { class: "mk-hide pill lv" + (QLEVELS.indexOf(m.level) + 1) }, m.level) : h("span", { class: "mk-hide" }),
+          h("span", { class: "small muted mk-hide" }, `${m.right_pct}% got it`)); };
+      show(box, ...[...bySub].map(([s, chs]) => {
+        const n = [...chs.values()].reduce((a, tps) => a + [...tps.values()].reduce((x, l) => x + l.length, 0), 0);
+        return h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, s), h("span", { class: "pill" }, `${n} question${n === 1 ? "" : "s"}`)),
+          ...[...chs].map(([c, tps]) => {
+            const all = [...tps.values()].flat(), w = all.filter(m => m.result === "wrong").length, sk = all.filter(m => m.result === "blank").length;
+            return h("details", { class: "mk-ch", open },
+              h("summary", {}, h("b", {}, c || "Chapter not tagged"), h("span", { class: "small muted" }, ` · ${all.length}` + (w && sk ? ` (${w} wrong, ${sk} skipped)` : ""))),
+              ...[...tps].map(([t, l]) => h("div", { class: "mk-topic" }, t ? h("div", { class: "mk-th small" }, t) : null, ...l.map(row))));
+          }));
+      }),
+      r.noQuestion.length ? h("p", { class: "small muted", style: "margin:0" }, `Not listed: ${r.noQuestion.map(x => `${x.count} from ${x.code}`).join(", ")}. Those tests have only an answer key in the portal, so their questions can't be shown.`) : null);
+    }
+    [fType, fSub, fTest, fHide].forEach(f => (f.onchange = draw));
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "My mistakes"), h("p", { class: "sub" }, "Every question you got wrong or skipped, in all your tests so far. Tap one to try it again and see the solution."))),
+      tiles,
+      h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fTest,
+        h("label", { class: "imp-check" }, fHide, h("span", {}, "Hide the answer until I tap Show")))),
+      box);
+    draw();
+  }, ["student"]);
 
   // ================================================================ account
   route(/^\/account$/, async view => {

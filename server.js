@@ -1106,6 +1106,38 @@ app.get("/api/my/tests/:id", auth, wrap(async req => {
   return studentReport(t, req.user.id);
 }));
 
+// every question a student got wrong, partly right or left blank, across all published tests
+app.get("/api/my/mistakes", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  const tests = await qa(`SELECT t.* FROM tests t JOIN results r ON r.test_id=t.id WHERE r.student_id=? AND t.published=1 ORDER BY t.test_date, t.id`, req.user.id);
+  const items = [], noQuestion = [];
+  for (const t of tests) {
+    const { scored } = await scoredCached(t);
+    const me = scored.find(x => x.student_id === req.user.id); if (!me) continue;
+    const linked = new Map((await qa(`SELECT tq.qno, q.subject, q.chapter, q.topic, q.difficulty, q.qtype FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id)).map(r => [r.qno, r]));
+    const right = {}; for (const x of scored) for (const d of x.detail) if (d.result === "correct" || d.result === "bonus") right[d.q] = (right[d.q] || 0) + 1;
+    let missing = 0;
+    for (const d of me.detail) {
+      if (!["wrong", "blank", "partial"].includes(d.result)) continue;
+      const q = linked.get(d.q);
+      if (!q) { missing++; continue; }
+      items.push({ test_id: t.id, code: t.code, test: t.name, date: t.test_date, qno: d.q, result: d.result, marked: d.marked || "", key: d.key || "", marks: d.marks,
+        subject: q.subject || d.subject, chapter: q.chapter || "", topic: q.topic || "", level: q.difficulty || "", right_pct: scored.length ? Math.round(((right[d.q] || 0) / scored.length) * 100) : 0 });
+    }
+    if (missing) noQuestion.push({ code: t.code, test: t.name, count: missing });
+  }
+  return { tests: tests.length, items, noQuestion };
+}));
+// one of those questions, with its solution
+app.get("/api/my/mistakes/:tid/:qno", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  const t = await q1("SELECT id FROM tests WHERE id=? AND published=1", Number(req.params.tid));
+  if (!t || !(await q1("SELECT 1 AS x FROM results WHERE test_id=? AND student_id=?", t.id, req.user.id))) throw new HttpError(404, "Not found.");
+  const q = await q1(`SELECT q.text, q.image, q.options, q.solution, q.fmt, q.qtype FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=? AND tq.qno=?`, t.id, Number(req.params.qno));
+  if (!q) throw new HttpError(404, "Not found.");
+  return { ...q, options: JSON.parse(q.options || "[]") };
+}));
+
 // ------------------------------------------------------------------ health, backup, dashboard counts
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 // Central team: download a complete copy of all data

@@ -455,3 +455,14 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .omr-view { max-width: 100%; min-width: 0 }
 #modal-body:has(.omr-view) { min-width: 0; max-width: 100%; overflow: hidden; display: grid; gap: 10px }
 #modal-body:has(.omr-view) > * { min-width: 0 }
+
+/* my mistakes */
+.mk-ch { border-top: 1px solid var(--line); padding: 8px 0 }
+.mk-ch > summary { cursor: pointer; padding: 4px 0; list-style-position: outside }
+.mk-topic { display: grid; gap: 4px; margin: 6px 0 4px }
+.mk-th { color: var(--muted); font-weight: 600; margin: 4px 0 0 2px }
+.mk-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center; width: 100%; text-align: left; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; color: var(--fg); cursor: pointer }
+.mk-row:hover { background: var(--gold-soft) }
+.mk-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+@media (max-width: 520px) { .mk-row { grid-template-columns: auto minmax(0, 1fr) auto } .mk-row .mk-hide { display: none } }

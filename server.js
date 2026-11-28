@@ -51,10 +51,29 @@ app.use((req, res, next) => {
 });
 // question figures never change once made (names are content hashes), so phones can keep them
 app.use("/qimg", express.static(path.join(__dirname, "public", "qimg"), { maxAge: "30d", immutable: true }));
+// pictures added in the portal (imported papers) live in the database, so backups include them
+app.get("/qimg/:f", async (req, res, next) => {
+  const m = /^([0-9a-f]{16,40})\.(webp|jpg|png)$/.exec(req.params.f);
+  if (!m || !q1) return next();
+  try {
+    const r = await q1("SELECT type, data FROM images WHERE id=?", m[1]);
+    if (!r) return res.status(404).end();
+    res.set("Cache-Control", "public, max-age=2592000, immutable").type(r.type).send(Buffer.from(r.data, "base64"));
+  } catch (e) { next(e); }
+});
+const IMG_EXT = { "image/webp": "webp", "image/jpeg": "jpg", "image/png": "png" };
+async function saveImage(dataUrl) {
+  const m = /^data:(image\/(?:webp|jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ""));
+  if (!m) bad("A picture could not be read.");
+  if (m[2].length > 4e6) bad("A picture is too large.");
+  const id = crypto.createHash("sha1").update(m[2]).digest("hex").slice(0, 24);
+  await run("INSERT INTO images (id, type, data) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING", id, m[1], m[2]);
+  return `/qimg/${id}.${IMG_EXT[m[1]]}`;
+}
 app.use(express.static(path.join(__dirname, "public"), {
   index: "index.html", maxAge: "1h",
   // the app-update file must always be checked fresh, so phones pick up new versions
-  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest|[\\/]app\.js|[\\/]exam\.js|style\.css|sheet_render\.js|omr_core\.js)$/.test(file)) res.set("Cache-Control", "no-cache"); },
+  setHeaders: (res, file) => { if (/(sw\.js|index\.html|manifest\.webmanifest|[\\/]app\.js|[\\/]exam\.js|style\.css|import\.js|sheet_render\.js|omr_core\.js)$/.test(file)) res.set("Cache-Control", "no-cache"); },
 }));
 
 function cookies(req) {
@@ -330,6 +349,7 @@ function questionFilter(qy) {
     where.push(`${col} IN (${vals.map(() => "?").join(",")})`);
     args.push(...vals.map(v => (num ? Number(v) || 0 : col.startsWith("lower(") ? str(v, 120).toLowerCase() : str(v, 120))));
   };
+  if (qy.hidden !== "1") where.push("COALESCE(hidden,0)=0");
   many("subject", "lower(subject)"); many("chapter"); many("qtype"); many("difficulty"); many("exam"); many("year", "year", true);
   const ex = String(qy.exclude || "").split(",").map(Number).filter(Boolean).slice(0, 500);
   if (ex.length) { where.push(`id NOT IN (${ex.map(() => "?").join(",")})`); args.push(...ex); }
@@ -576,6 +596,49 @@ app.put("/api/tests/:id/questions", auth, central, wrap(async req => {
     return { ok: true };
   });
 }));
+// import a paper made outside the portal: question / solution pictures and answers, checked by an admin in the browser
+function keyAnswer(v, sec) {
+  const s = String(v || "").toUpperCase().replace(/[\s(),]/g, "");
+  if (sec.qtype === "integer" || sec.qtype === "decimal") return /^-?\d*\.?\d+$/.test(s) ? s : "";
+  return (sec.options === "1234" ? /^[1-4]{1,4}$/ : /^[A-D]{1,4}$/).test(s) ? (sec.qtype === "single" ? s[0] : s) : "";
+}
+app.post("/api/tests/:id/import", auth, central, wrap(async req => {
+  const t = await visibleTest(req.user, req.params.id);
+  const layout = layoutOf(t), idx = OMR.questionIndex(layout);
+  const items = Array.isArray(req.body.items) ? req.body.items.slice(0, 400) : [];
+  const label = str(req.body.label, 60) || t.code, hidden = req.body.bank === false ? 1 : 0;
+  const tag = (url, w) => `<p><img class="qimp" src="${url}" style="width:${Math.max(40, Math.min(1400, Math.round(Number(w) || 600)))}px" alt=""></p>`;
+  const prepared = [];
+  for (const it of items) {
+    const slot = idx.find(x => x.qno === Number(it.qno)); if (!slot) continue;
+    prepared.push({ slot, img: it.img ? await saveImage(it.img) : "", w: it.w, sol: it.sol ? await saveImage(it.sol) : "", sw: it.sw, answer: keyAnswer(it.answer, slot.sec) });
+  }
+  return tx(async () => {
+    const fresh = await q1("SELECT answer_key FROM tests WHERE id=?", t.id), key = JSON.parse(fresh.answer_key || "{}");
+    let questions = 0, answers = 0;
+    for (const p of prepared) {
+      const qno = p.slot.qno, sec = p.slot.sec;
+      if (p.img) {
+        const ref = `imp:${t.id}:${qno}`;
+        for (const o of await qa("SELECT id FROM questions WHERE ref=?", ref)) { // an earlier import of this question, unless another test uses it
+          if (await q1("SELECT 1 AS x FROM test_questions WHERE question_id=? AND test_id<>?", o.id, t.id)) continue;
+          await run("DELETE FROM test_questions WHERE question_id=?", o.id); await run("DELETE FROM questions WHERE id=?", o.id);
+        }
+        const bankAns = sec.options === "1234" && /^[1-4]+$/.test(p.answer) ? [...p.answer].map(d => "ABCD"[d - 1]).join("") : p.answer;
+        const id = await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, ref, exam, hidden)
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, cap1(sec.subject), "", "", sec.qtype, "Medium", tag(p.img, p.w), "", "[]", bankAns,
+                                 p.sol ? tag(p.sol, p.sw) : "", req.user.id, "html", label, ref, "", hidden);
+        await run("DELETE FROM test_questions WHERE test_id=? AND qno=?", t.id, qno);
+        await run("INSERT INTO test_questions (test_id, qno, question_id) VALUES (?,?,?)", t.id, qno, id);
+        questions++;
+      }
+      if (p.answer) { key[qno] = p.answer; answers++; }
+    }
+    await run("UPDATE tests SET answer_key=? WHERE id=?", JSON.stringify(key), t.id);
+    return { questions, answers };
+  });
+}));
+const cap1 = s => (s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : "");
 app.post("/api/tests/:id/publish", auth, central, wrap(async req => {
   const t = await visibleTest(req.user, req.params.id);
   await run("UPDATE tests SET published=? WHERE id=?", req.body.published ? 1 : 0, t.id);

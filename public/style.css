@@ -435,3 +435,17 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .nta-exits.last { background: #fde2df; color: #a1251b }
 .nta-modal-card.danger { border-top: 6px solid #c62828 }
 .nta-modal.exitwarn .nta-modal-card { max-width: 520px }
+
+/* imported paper pictures */
+.rich img.qimp { max-width: 100%; height: auto; display: block; background: #fff; border-radius: 4px; margin: 2px 0 }
+@media (prefers-color-scheme: dark) { .rich img.qimp { filter: invert(0.9) hue-rotate(180deg); background: transparent } }
+.nta-qtext img.qimp, .pp-page img.qimp { filter: none !important; background: #fff !important }
+.pp-body .rich img.qimp { max-width: 100% !important; max-height: none !important; width: auto }
+.imp-list { gap: 0 }
+.imp-row { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); min-width: 0 }
+.imp-row:first-child { border-top: 0 }
+.imp-row.imp-warn { background: var(--warn-soft); margin: 0 -16px; padding: 12px 16px }
+.imp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px }
+.imp-pic { overflow-x: auto } .imp-pic img { max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); border-radius: 4px; display: block }
+.imp-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; align-self: end; padding-bottom: 8px; cursor: pointer }
+.imp-check input { width: 18px; height: 18px; margin: 0 }

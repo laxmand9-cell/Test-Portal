@@ -4,7 +4,7 @@
   // Heavy tools (scanning, PDF, Excel) load only on the admin screens that use them, so student phones download little.
   const LIBS = { jsqr: "/vendor/jsQR.js", qrcode: "/vendor/qrcode.js", jspdf: "/vendor/jspdf.umd.min.js", jszip: "/vendor/jszip.min.js",
     pdf: "/vendor/pdf.min.js", pdfworker: "/vendor/pdf.worker.min.js", xlsx: "/vendor/xlsx.full.min.js",
-    katex: "/vendor/katex/katex.min.js", katexauto: "/vendor/katex/auto-render.min.js", exam: "/exam.js" };
+    katex: "/vendor/katex/katex.min.js", katexauto: "/vendor/katex/auto-render.min.js", exam: "/exam.js", importer: "/import.js" };
   const libLoads = {};
   const loadLib = k => (libLoads[k] = libLoads[k] || new Promise((res, rej) => {
     const s = document.createElement("script"); s.src = LIBS[k];
@@ -20,7 +20,7 @@
       for (const el of [...node.children]) {
         if (!RICH_TAGS.has(el.tagName)) { el.replaceWith(...[...el.childNodes].map(n => n.nodeType === 3 ? n : document.createTextNode(n.textContent))); continue; }
         for (const at of [...el.attributes]) {
-          const ok = (at.name === "class") || (el.tagName === "IMG" && at.name === "src" && /^\/qimg\/[0-9a-f]+\.webp$/.test(at.value)) ||
+          const ok = (at.name === "class") || (el.tagName === "IMG" && at.name === "src" && /^\/qimg\/[0-9a-f]+\.(webp|jpg|png)$/.test(at.value)) ||
             (el.tagName === "IMG" && at.name === "style" && /^width:\d+px$/.test(at.value)) || (el.tagName === "IMG" && at.name === "alt") || (/^(colspan|rowspan)$/.test(at.name) && /^\d+$/.test(at.value));
           if (!ok) el.removeAttribute(at.name);
         }
@@ -711,6 +711,11 @@
           !isNew ? h("button", { class: "btn danger", type: "button", onclick: () => confirmBox("Delete this test and all its results?", "Delete", async () => { await DEL(`/api/tests/${id}`); location.hash = "#/tests"; }) }, "Delete test") : null)));
   }, ["central"]);
 
+  route(/^\/tests\/(\d+)\/import$/, async (view, id) => {
+    await need("pdf", "pdfworker", "importer");
+    const t = await GET(`/api/tests/${id}`);
+    window.TPImport.page(view, t, O.getLayout(t.sheet), h("a", { href: `#/tests/${id}/questions` }, "‹ Questions"));
+  }, ["central"]);
   route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions|toppers))?$/, async (view, id, tab = "results") => {
     await structure();
     const t = await GET(`/api/tests/${id}`);
@@ -1167,7 +1172,8 @@
       const n = Object.keys(links).length;
       show(summary, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Questions for this test"),
         h("p", { class: "small muted", style: "margin:0" }, "Pick questions for each section from the question bank. Their answers go into the answer key automatically, and students see each question with its solution in their results.")),
-        h("div", { class: "row" }, h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`), n ? h("a", { class: "btn gold small", href: `#/print/${t.id}` }, "Print paper") : null)),
+        h("div", { class: "row" }, h("span", { class: "pill " + (n === idx.length ? "ok" : "warn") }, `${n} of ${idx.length} picked`),
+          h("a", { class: "btn ghost small", href: `#/tests/${t.id}/import` }, "Import paper from PDF"), n ? h("a", { class: "btn gold small", href: `#/print/${t.id}` }, "Print paper") : null)),
         t.mode && t.mode !== "omr" && n < idx.length ? h("p", { class: "err small", style: "margin:0" }, "This is an online test: students can start it only after every question number has a question.") : null);
       show(wrap, secs.map(s => sectionCard(s)));
     }

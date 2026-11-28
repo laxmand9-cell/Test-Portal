@@ -37,6 +37,7 @@ const TABLES = [
   `attempts (id {ID}, test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE, student_id INTEGER NOT NULL REFERENCES users(id),
      started_at BIGINT NOT NULL, ends_at BIGINT NOT NULL, state TEXT NOT NULL DEFAULT '{}', saved_at BIGINT, submitted_at BIGINT, UNIQUE(test_id, student_id))`,
   `settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
+  `images (id TEXT PRIMARY KEY, type TEXT NOT NULL, data TEXT NOT NULL)`,
   `test_questions (test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE, qno INTEGER NOT NULL,
      question_id INTEGER NOT NULL REFERENCES questions(id), PRIMARY KEY(test_id, qno))`,
   `results (id {ID}, test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
@@ -47,7 +48,8 @@ const TABLE_NAMES = TABLES.map(t => t.split(" ")[0]);
 // columns added after the first release; older databases get them on start-up
 const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"], ["questions", "exam", "TEXT DEFAULT ''"],
   ["tests", "mode", "TEXT DEFAULT 'omr'"], ["tests", "duration", "INTEGER"], ["tests", "opens_at", "BIGINT"], ["tests", "closes_at", "BIGINT"],
-  ["tests", "max_exits", "INTEGER DEFAULT 0"], ["attempts", "exits", "TEXT DEFAULT '[]'"]];
+  ["tests", "max_exits", "INTEGER DEFAULT 0"], ["attempts", "exits", "TEXT DEFAULT '[]'"],
+  ["questions", "hidden", "INTEGER DEFAULT 0"]];
 const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
 const PG_NOW = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')";
 

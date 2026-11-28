@@ -274,7 +274,7 @@ body.exam-mode .view { max-width: none; padding: 0; gap: 0; }
   .nta-logo { width: 34px; height: 34px; font-size: 13px; }
   .nta-info { min-width: 0; flex: 1 1 150px; }
   .nta-info > div:nth-child(3) { display: none; }
-  .nta-timebox { margin-left: auto; } .nta-timebox span { display: none; }
+  .nta-timebox { margin-left: auto; } .nta-timebox span:not(.nta-exits) { display: none; }
   .nta-time { font-size: 18px; }
 }
 
@@ -430,3 +430,8 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .qdot.ok { background: var(--ok); color: var(--surface) } .qdot.bad { background: var(--bad); color: var(--surface) } .qdot.warn { background: var(--warn); color: var(--surface) }
 .ra-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; background: var(--sunk); border-radius: 8px; padding: 10px 12px }
 .ra-facts div { display: grid; gap: 2px } .ra-facts span:first-child { color: var(--muted); font-size: 12px }
+.nta-exits { display: inline-block; margin-top: 2px; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: #fff3d6; color: #8a5300 }
+.nta-exits[hidden] { display: none !important }
+.nta-exits.last { background: #fde2df; color: #a1251b }
+.nta-modal-card.danger { border-top: 6px solid #c62828 }
+.nta-modal.exitwarn .nta-modal-card { max-width: 520px }

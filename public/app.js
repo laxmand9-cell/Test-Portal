@@ -684,7 +684,8 @@
     const dur = h("input", { id: "t-duration", type: "number", min: 5, max: 600, value: t.duration || DEF_MIN[t.sheet] || 180, style: "max-width:140px" });
     const localDT = ms => { if (!ms) return ""; const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); };
     const opens = h("input", { id: "t-opens", type: "datetime-local", value: localDT(t.opens_at) }), closes = h("input", { id: "t-closes", type: "datetime-local", value: localDT(t.closes_at) });
-    const cbtBox = h("div", { class: "row" }, field("Duration (minutes)", dur), field("Opens at", opens, "Optional. Students can start from this time."), field("Closes at", closes, "Optional. No one can start after this, and time ends here."));
+    const exitsSel = h("select", { id: "t-exits" }, [[3, "3 exits"], [5, "5 exits"], [10, "10 exits"], [0, "Never (only record exits)"]].map(([v, l]) => h("option", { value: v, selected: (t.max_exits == null ? 5 : t.max_exits) === v }, l)));
+    const cbtBox = h("div", { class: "row" }, field("Duration (minutes)", dur), field("Auto-submit after", exitsSel, "Leaving the test window (another app, tab or window) counts as an exit. Students are warned each time."), field("Opens at", opens, "Optional. Students can start from this time."), field("Closes at", closes, "Optional. No one can start after this, and time ends here."));
     const syncMode = () => (cbtBox.hidden = mode.value === "omr");
     const levelFilter = h("select", { id: "t-level", "aria-label": "Select by class" }, h("option", { value: "" }, "Tick all of a class…"), ["11", "12", "Dropper"].map(l => h("option", { value: l }, `All ${LEVEL[l]} batches`)));
     const checks = h("div", { class: "checks" });
@@ -699,7 +700,7 @@
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
         const body = { code: code.value, name: name.value, test_date: date.value, sheet: sheet.value, batch_ids: [...chosen],
-          mode: mode.value, duration: +dur.value, opens_at: opens.value ? new Date(opens.value).getTime() : null, closes_at: closes.value ? new Date(closes.value).getTime() : null };
+          mode: mode.value, duration: +dur.value, max_exits: +exitsSel.value, opens_at: opens.value ? new Date(opens.value).getTime() : null, closes_at: closes.value ? new Date(closes.value).getTime() : null };
         try { const r = isNew ? await POST("/api/tests", body) : await PUT(`/api/tests/${id}`, body); location.hash = isNew ? `#/tests/${r.id}/questions` : `#/tests/${id}`; }
         catch (x) { err.textContent = x.message; }
       } }, h("div", { class: "row" }, field("Test code", code, "Short, printed in the QR of every sheet"), field("Test name", name), field("Date", date)),
@@ -740,9 +741,11 @@
     const done = list.filter(a => a.submitted_at).length;
     const box = h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Online test"),
       h("p", { class: "small muted", style: "margin:0" }, `${t.duration} minutes · ${win} · ${list.length} started · ${done} submitted. Submitted answers are marked with the answer key like OMR sheets.`))));
-    if (list.length) box.append(h("details", {}, h("summary", {}, "Students who started"), h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Roll", "Name", "Started", "Status", ""].map(x => h("th", {}, x)))),
+    if (list.length) box.append(h("details", {}, h("summary", {}, "Students who started"), h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Roll", "Name", "Started", "Status", "Left the test", ""].map(x => h("th", {}, x)))),
       h("tbody", {}, list.map(a => h("tr", {}, h("td", { class: "mono" }, a.roll), h("td", {}, a.name), h("td", {}, when(a.started_at)),
-        h("td", {}, a.submitted_at ? h("span", { class: "pill ok" }, "Submitted") : Date.now() < a.ends_at ? h("span", { class: "pill warn" }, "Writing now") : h("span", { class: "pill" }, "Time over")),
+        h("td", {}, a.auto_submitted ? h("span", { class: "pill bad" }, "Auto-submitted") : a.submitted_at ? h("span", { class: "pill ok" }, "Submitted") : Date.now() < a.ends_at ? h("span", { class: "pill warn" }, "Writing now") : h("span", { class: "pill" }, "Time over")),
+        h("td", {}, a.exits ? h("span", { class: "pill " + (a.max_exits && a.exits >= a.max_exits ? "bad" : "warn") }, `${a.exits} time${a.exits === 1 ? "" : "s"}`) : h("span", { class: "muted" }, "0"),
+          a.screen_off ? h("div", { class: "small muted" }, `screen went dark ${a.screen_off}× (not counted)`) : null),
         h("td", {}, h("button", { class: "link small", type: "button", onclick: () => confirmBox(`Let ${a.name || a.roll} take the test again? Their online answers for this test will be deleted.`, "Allow retake", async () => {
           try { await DEL(`/api/tests/${t.id}/attempts/${a.student_id}`); toast("They can start again"); render(); } catch (x) { toast(x.message); } }) }, "Allow retake")))))))));
     return box;

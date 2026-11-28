@@ -46,7 +46,8 @@ const TABLES = [
 const TABLE_NAMES = TABLES.map(t => t.split(" ")[0]);
 // columns added after the first release; older databases get them on start-up
 const ADDED_COLUMNS = [["questions", "fmt", "TEXT DEFAULT ''"], ["questions", "source", "TEXT DEFAULT ''"], ["questions", "ref", "TEXT DEFAULT ''"], ["questions", "year", "INTEGER"], ["questions", "exam", "TEXT DEFAULT ''"],
-  ["tests", "mode", "TEXT DEFAULT 'omr'"], ["tests", "duration", "INTEGER"], ["tests", "opens_at", "BIGINT"], ["tests", "closes_at", "BIGINT"]];
+  ["tests", "mode", "TEXT DEFAULT 'omr'"], ["tests", "duration", "INTEGER"], ["tests", "opens_at", "BIGINT"], ["tests", "closes_at", "BIGINT"],
+  ["tests", "max_exits", "INTEGER DEFAULT 5"], ["attempts", "exits", "TEXT DEFAULT '[]'"]];
 const INDEXES = ["CREATE INDEX IF NOT EXISTS questions_ref ON questions (ref)", "CREATE INDEX IF NOT EXISTS questions_chapter ON questions (subject, chapter)"];
 const PG_NOW = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')";
 

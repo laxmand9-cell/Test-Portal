@@ -525,7 +525,8 @@ async function saveCbt(id, b, sheet) {
   const ms = v => (Number(v) > 0 ? Math.round(Number(v)) : null);
   const opens = ms(b.opens_at), closes = ms(b.closes_at);
   if (mode !== "omr" && opens && closes && closes <= opens) bad("The online test must close after it opens.");
-  await run("UPDATE tests SET mode=?, duration=?, opens_at=?, closes_at=? WHERE id=?", mode, duration, opens, closes, id);
+  const maxExits = b.max_exits === undefined || b.max_exits === null || b.max_exits === "" ? 5 : Math.max(0, Math.min(50, Math.round(Number(b.max_exits)) || 0));
+  await run("UPDATE tests SET mode=?, duration=?, opens_at=?, closes_at=?, max_exits=? WHERE id=?", mode, duration, opens, closes, maxExits, id);
 }
 app.post("/api/tests", auth, central, wrap(async req => { const r = await saveTest(req, null); await saveCbt(r.id, req.body || {}, req.body.sheet); return r; }));
 app.put("/api/tests/:id", auth, central, wrap(async req => { const r = await saveTest(req, Number(req.params.id)); await saveCbt(Number(req.params.id), req.body || {}, req.body.sheet); return r; }));
@@ -900,10 +901,20 @@ app.get("/api/my/cbt", auth, wrap(async req => {
     const att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
     const layout = OMR.getLayout(t.sheet);
     out.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, duration: t.duration || DEFAULT_MIN[t.sheet] || 180, opens_at: t.opens_at, closes_at: t.closes_at,
-      questions: layout ? OMR.totalQ(layout) : 0, status: cbtStatus(t, att), published: !!t.published });
+      questions: layout ? OMR.totalQ(layout) : 0, status: cbtStatus(t, att), published: !!t.published, max_exits: maxExitsOf(t) });
   }
   return { now: Date.now(), tests: out };
 }));
+// leaving the exam window: each exit is logged; after max_exits the next one submits the test (0 = never)
+const maxExitsOf = t => (t.max_exits == null ? 5 : Number(t.max_exits));
+const parseJ = (v, d) => { try { return JSON.parse(v || "") ?? d; } catch (e) { return d; } };
+function exitCount(att, state) {
+  const server = parseJ(att.exits, []).filter(e => e.c).length;
+  const st = state || parseJ(att.state, {});
+  const client = Array.isArray(st.exits) ? st.exits.filter(e => e.c).length : 0;
+  return Math.max(server, client);
+}
+const overExits = (t, n) => maxExitsOf(t) > 0 && n > maxExitsOf(t);
 async function myCbtTest(req) {
   if (req.user.role !== "student") forbid();
   const t = (await cbtTestsFor(req.user)).find(x => x.id === Number(req.params.id));
@@ -937,11 +948,13 @@ app.post("/api/my/cbt/:id/start", auth, wrap(async req => {
     att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
   }
   return { test: { id: t.id, code: t.code, name: t.name, sheet_title: layoutOf(t).title }, now, ends_at: att.ends_at, state: JSON.parse(att.state || "{}"), ...paper,
+    max_exits: maxExitsOf(t), exits: exitCount(att),
     candidate: { name: req.user.name || req.user.username, roll: req.user.roll } };
 }));
 const cleanState = s => {
-  const o = { ans: {}, mark: {}, seen: {}, time: {}, cur: 0 };
+  const o = { ans: {}, mark: {}, seen: {}, time: {}, cur: 0, exits: [] };
   if (!s || typeof s !== "object") return o;
+  if (Array.isArray(s.exits)) o.exits = s.exits.slice(0, 300).map(e => ({ at: Number(e && e.at) || 0, ms: Math.max(0, Number(e && e.ms) || 0), kind: str(e && e.kind, 10), c: !!(e && e.c) }));
   for (const k of ["ans", "mark", "seen", "time"]) for (const [q, v] of Object.entries(s[k] || {})) {
     const n = Number(q); if (!(n >= 1 && n <= 400)) continue;
     o[k][n] = k === "ans" ? str(v, 16) : k === "time" ? Math.max(0, Math.min(36000, Number(v) || 0)) : !!v;
@@ -955,8 +968,24 @@ app.put("/api/my/cbt/:id/save", auth, wrap(async req => {
   if (!att) bad("Start the test first.");
   if (att.submitted_at) return { submitted: true };
   if (Date.now() > att.ends_at + GRACE_MS) { await finishAttempt(att, t); return { submitted: true }; }
-  await run("UPDATE attempts SET state=?, saved_at=? WHERE id=?", JSON.stringify(cleanState(req.body.state)), Date.now(), att.id);
+  const st = cleanState(req.body.state);
+  if (overExits(t, exitCount(att, st))) { await finishAttempt(att, t, st); return { submitted: true, reason: "exits" }; }
+  await run("UPDATE attempts SET state=?, saved_at=? WHERE id=?", JSON.stringify(st), Date.now(), att.id);
   return { ok: true, now: Date.now(), ends_at: att.ends_at };
+}));
+// the exam screen reports the moment a student leaves it (sent even if the page is going to the background)
+app.post("/api/my/cbt/:id/exit", auth, wrap(async req => {
+  const t = await myCbtTest(req);
+  const att = await q1("SELECT * FROM attempts WHERE test_id=? AND student_id=?", t.id, req.user.id);
+  if (!att) bad("Start the test first.");
+  if (att.submitted_at) return { submitted: true };
+  const log = parseJ(att.exits, []);
+  if (log.length < 300) log.push({ at: Date.now(), kind: str((req.body || {}).kind, 10), c: !!(req.body || {}).counted });
+  await run("UPDATE attempts SET exits=? WHERE id=?", JSON.stringify(log), att.id);
+  att.exits = JSON.stringify(log);
+  const n = exitCount(att);
+  if (overExits(t, n)) { await finishAttempt(att, t); return { submitted: true, reason: "exits", count: n }; }
+  return { count: n, max: maxExitsOf(t) };
 }));
 app.post("/api/my/cbt/:id/submit", auth, wrap(async req => {
   const t = await myCbtTest(req);
@@ -972,8 +1001,11 @@ app.post("/api/my/cbt/:id/submit", auth, wrap(async req => {
 app.get("/api/tests/:id/attempts", auth, admin, wrap(async req => {
   const t = await visibleTest(req.user, req.params.id);
   const scope = await campusScope(req.user);
-  return qa(`SELECT a.student_id, a.started_at, a.ends_at, a.submitted_at, u.roll, u.name FROM attempts a JOIN users u ON u.id=a.student_id
+  const rows = await qa(`SELECT a.student_id, a.started_at, a.ends_at, a.submitted_at, a.exits, a.state, u.roll, u.name FROM attempts a JOIN users u ON u.id=a.student_id
              WHERE a.test_id=? AND ${inList("u.campus_id", scope)} ORDER BY u.roll`, t.id);
+  return rows.map(({ exits, state, ...a }) => { const st = parseJ(state, {}), n = exitCount({ exits, state }, st);
+    const sleeps = (Array.isArray(st.exits) ? st.exits : parseJ(exits, [])).filter(e => !e.c).length;
+    return { ...a, exits: n, screen_off: sleeps, max_exits: maxExitsOf(t), auto_submitted: !!a.submitted_at && overExits(t, n) }; });
 }));
 app.delete("/api/tests/:id/attempts/:sid", auth, admin, wrap(async req => {
   const t = await visibleTest(req.user, req.params.id);

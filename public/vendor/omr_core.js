@@ -38,7 +38,7 @@
   }
   const PCM = ["PHYSICS", "CHEMISTRY", "MATHEMATICS"];
   const PRESETS = {
-    JM: { id: "JM", title: "JEE MAIN - FULL TEST", sections: PCM.flatMap(jeeMainSubject) },
+    JM: { id: "JM", title: "JEE MAIN TEST", sections: PCM.flatMap(jeeMainSubject) },
     JMP: { id: "JMP", title: "JEE MAIN - PHYSICS TEST", sections: jeeMainSubject("PHYSICS") },
     NEET: { id: "NEET", title: "NEET - FULL TEST", sections: ["PHYSICS", "CHEMISTRY", "BOTANY", "ZOOLOGY"].map(s => section(s, s, "single", 45)) },
     NEETP: { id: "NEETP", title: "NEET - PHYSICS TEST", sections: [section("PHYSICS", "PHYSICS", "single", 45)] },

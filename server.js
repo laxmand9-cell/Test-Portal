@@ -434,6 +434,8 @@ app.delete("/api/questions/:id", auth, central, wrap(async req => {
 const PACKS = {
   "jee-main-pyq-physics": { prefix: "jmp:", exam: "JEE Main", file: "jee-main-pyq-physics.json.gz", name: "JEE Main previous-year questions · Physics",
     note: "AIEEE 2002 to JEE Main 2026, chapter-wise, with solutions and figures." },
+  "chemistry": { prefix: "chm:", exam: "", file: "chemistry.json.gz", name: "Chemistry question bank",
+    note: "35 chapters (physical, organic, inorganic), single-correct, with figures; solutions where available." },
 };
 const packData = id => JSON.parse(require("zlib").gunzipSync(fs.readFileSync(path.join(__dirname, "bank", PACKS[id].file))).toString("utf8"));
 app.get("/api/packs", auth, central, wrap(async () => {

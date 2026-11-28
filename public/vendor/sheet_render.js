@@ -203,7 +203,45 @@
     g.text(105, 289.5, "Machine-read sheet: keep clean and flat. Do not staple.", { size: 6.5, color: GREY, align: "center" });
   }
 
-  function sheetSvg(layout, test, student) { const g = svgBackend(); drawSheet(g, layout, test, student); return g.done(); }
+  // a student's own sheet as the scanner read it: their marks in colour (green right, red wrong, amber partly right)
+  // and a green ring on the correct option they missed
+  function drawMarks(g, layout, detail) {
+    const geom = O.buildGeometry(layout), byQ = new Map(detail.map(d => [d.q, d]));
+    const OK = "#1d7a46", BAD = "#c62828", PART = "#b26a00", PEN = "#26304a";
+    const tone = r => (r === "correct" || r === "bonus" ? OK : r === "wrong" ? BAD : r === "partial" ? PART : PEN);
+    const same = (b, c) => b.v === c || b.v === String("ABCD".indexOf(c) + 1) || (/^[1-4]$/.test(c) && b.v === "ABCD"[+c - 1]);
+    const dot = (b, col) => g.circle(b.x, b.y, b.r, { fill: col, stroke: col, lw: 0.2 });
+    for (const f of geom.fields) {
+      if (f.kind !== "q") continue;
+      const d = byQ.get(f.qno); if (!d) continue;
+      const col = tone(d.result), right = d.result === "correct" || d.result === "bonus";
+      if (f.qtype === "single" || f.qtype === "multi") {
+        const marked = [...String(d.marked || "").toUpperCase()], key = [...String(d.key || "").toUpperCase()];
+        for (const b of f.columns[0]) {
+          const on = marked.some(c => same(b, c)), isKey = key.some(c => same(b, c));
+          if (on) dot(b, col);
+          if (isKey && !on && d.result !== "dropped" && d.result !== "bonus") g.circle(b.x, b.y, b.r + 0.5, { stroke: OK, lw: 0.5 });
+        }
+        continue;
+      }
+      const m = String(d.marked || "");
+      if (/^-?\d*\.?\d+$/.test(m)) {
+        const neg = m.startsWith("-"), [ip0, dp = ""] = m.replace("-", "").split("."), ip = ip0.replace(/^0+(?=\d)/, "");
+        const sign = [], ipc = [], dpc = []; let ci = 0, inDp = false;
+        for (const p of f.pattern) { if (p === ".") { inDp = true; continue; } const c = f.columns[ci++]; if (p === "-") sign.push(c); else (inDp ? dpc : ipc).push(c); }
+        const put = new Map();
+        for (let k = 0; k < ip.length && k < ipc.length; k++) put.set(ipc[ipc.length - 1 - k], ip[ip.length - 1 - k]);
+        for (let k = 0; k < dp.length && k < dpc.length; k++) put.set(dpc[k], dp[k]);
+        if (neg && sign[0]) dot(sign[0][0], col);
+        for (const [c, digit] of put) {
+          const b = c.find(x => x.v === digit); if (b) dot(b, col);
+          if (!geom.style && O.NUM_TITLE_H) g.text(c[0].x, f.box[1] + O.NUM_TITLE_H + 3.3, digit, { size: 7, bold: true, color: col, align: "center" });
+        }
+      }
+      if (!right && d.key && d.result !== "dropped") g.text(f.box[0] + f.box[2] - 0.8, f.box[1] + 2.8, `Ans ${d.key}`, { size: 5.6, bold: true, color: OK, align: "right" });
+    }
+  }
+  function sheetSvg(layout, test, student, detail) { const g = svgBackend(); drawSheet(g, layout, test, student); if (detail) drawMarks(g, layout, detail); return g.done(); }
   function sheetsPdf(layout, test, students) {
     const doc = new root.jspdf.jsPDF({ unit: "mm", format: "a4", compress: true });
     students.forEach((s, i) => { if (i) doc.addPage(); drawSheet(pdfBackend(doc), layout, test, s); });

@@ -770,7 +770,9 @@ async function studentReport(t, studentId) {
       accuracy: right + wrong + partial ? Math.round(((right + partial * 0.5) / (right + wrong + partial)) * 100) : null,
       rank_batch: rankIn(batchMates, k), rank_all: rankIn(scored, k), batch_avg: avg(mates), all_avg: avg(all), top: Math.max(...all) };
   });
-  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title }, max, subject_detail,
+  const who = (await q1("SELECT name, roll FROM users WHERE id=?", studentId)) || {};
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title, sheet: layout.id }, max, subject_detail,
+    student: { name: who.name || "", roll: who.roll || "" }, source: (await q1("SELECT source FROM results WHERE test_id=? AND student_id=?", t.id, studentId) || {}).source || "",
     batch_avg: avg(batchMates.map(x => x.total)), all_avg: avg(scored.map(x => x.total)), top_total: Math.max(...scored.map(x => x.total)),
     subjects,
     subject_max: layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {}),

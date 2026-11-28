@@ -449,3 +449,9 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .imp-pic { overflow-x: auto } .imp-pic img { max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); border-radius: 4px; display: block }
 .imp-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; align-self: end; padding-bottom: 8px; cursor: pointer }
 .imp-check input { width: 18px; height: 18px; margin: 0 }
+.sw.ring { background: transparent; border: 2px solid var(--ok); border-radius: 50%; width: 9px; height: 9px }
+.omr-view { background: #fff; border: 1px solid var(--line); border-radius: 6px; overflow: auto; max-height: 70vh }
+.omr-view svg { display: block; width: 100%; height: auto; min-width: 560px }
+.omr-view { max-width: 100%; min-width: 0 }
+#modal-body:has(.omr-view) { min-width: 0; max-width: 100%; overflow: hidden; display: grid; gap: 10px }
+#modal-body:has(.omr-view) > * { min-width: 0 }

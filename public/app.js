@@ -118,8 +118,8 @@
       const m = hash.match(r.re);
       if (!m) continue;
       if (r.who && !r.who.includes(state.me.role)) break;
-      show(view, h("p", { class: "muted" }, "Loading…"));
-      try { await r.fn(view, ...m.slice(1)); }
+      show(view, skeleton());
+      try { await r.fn(view, ...m.slice(1)); countUp(view); }
       catch (e) { show(view, h("div", { class: "card" }, h("h2", {}, "Could not open this page"), h("p", { class: "err" }, e.message))); }
       window.scrollTo(0, 0);
       return;
@@ -127,6 +127,28 @@
     location.hash = state.me.role === "student" ? "#/my" : "#/";
   }
   window.addEventListener("hashchange", render);
+  // grey placeholder shapes while a page loads
+  function skeleton() {
+    const bar = (w, hh = 14) => h("i", { class: "sk", style: `width:${w};height:${hh}px` });
+    return h("div", { class: "sk-page", "aria-busy": "true", "aria-label": "Loading" },
+      h("div", { class: "sk-head" }, bar("38%", 26), bar("24%")),
+      h("div", { class: "sk-tiles" }, ...[0, 1, 2].map(() => h("div", { class: "sk-card" }, bar("40%", 22), bar("60%")))),
+      h("div", { class: "sk-card" }, bar("30%", 18), bar("100%"), bar("92%"), bar("96%"), bar("70%")));
+  }
+  // score tiles count up briefly when a page opens
+  const calm = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function countUp(root) {
+    if (calm() || document.body.classList.contains("exam-mode")) return;
+    for (const b of root.querySelectorAll(".stats .stat > b")) {
+      if (b.children.length) continue;
+      const m = /^(\D{0,2})(\d{1,6}(?:\.\d+)?)(.*)$/.exec(b.textContent.trim()); if (!m) continue;
+      const end = parseFloat(m[2]), dec = (m[2].split(".")[1] || "").length, t0 = performance.now(), dur = 650;
+      if (!end) continue;
+      const tick = now => { const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+        b.textContent = m[1] + (end * e).toFixed(dec) + m[3]; if (k < 1 && b.isConnected) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }
+  }
   function drawBar(hash) {
     $("#bar").hidden = false;
     const me = state.me;

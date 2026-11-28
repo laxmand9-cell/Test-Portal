@@ -1898,7 +1898,8 @@
           for (const col of f.columns) for (const b of col) {
             const m = res.marks.find(mm => mm[0] === b.x && mm[1] === b.y);
             if (!m || m[3] === "off") continue;
-            ctx.lineWidth = 2; ctx.strokeStyle = m[3] === "doubt" ? "#e8780c" : hot ? "#c0392b" : "rgba(30,140,70,.85)";
+            ctx.lineWidth = 2; ctx.setLineDash(m[3] === "faint" ? [3, 3] : []);
+            ctx.strokeStyle = m[3] === "faint" ? "rgba(120,120,120,.8)" : m[3] === "doubt" ? "#e8780c" : hot ? "#c0392b" : "rgba(30,140,70,.85)";
             ctx.beginPath(); ctx.arc(b.x * ppm, b.y * ppm, b.r * ppm + 2.5, 0, Math.PI * 2); ctx.stroke();
           }
           if (hot) {

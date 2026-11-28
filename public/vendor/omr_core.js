@@ -460,28 +460,50 @@
     return res;
   }
 
+  // A faint trace (half-erased answer, smudge, pen bleed) next to one clearly dark bubble is not a
+  // second answer: when the darkest "on" mark stands well above every doubtful one, the doubtful
+  // ones are treated as empty and drawn as "faint" on the review screen.
+  const DOMINANT = 0.65, FAINT_RATIO = 0.34;
+  const relOf = (d, base) => (d - base) / Math.max(0.2, 1 - base);
   function readColumn(g, map, col, white, res, ctx, f) {
-    const on = [], doubt = [];
+    const on = [], doubt = [], base = ctx.base[groupOf(f)], rows = [];
     for (const b of col) {
-      const dd = ctx.dark.get(b), st = classify(dd, ctx.base[groupOf(f)]);
+      const dd = ctx.dark.get(b), st = classify(dd, base);
       const m = [b.x, b.y, b.r, st]; m.d = dd; res.marks.push(m);
+      rows.push({ b, m, st, x: relOf(dd, base) });
       if (st === "on") on.push(b.v); else if (st === "doubt") doubt.push(b.v);
     }
-    return { on, doubt };
+    let faint = [];
+    if (on.length === 1 && doubt.length) {
+      const top = rows.find(r => r.st === "on").x, dz = rows.filter(r => r.st === "doubt");
+      if (top >= DOMINANT && dz.every(r => r.x <= top * FAINT_RATIO)) {
+        for (const r of dz) r.m[3] = "faint";
+        faint = doubt.splice(0);
+      }
+    }
+    return { on, doubt, faint };
   }
+  const list = a => a.join(", ");
   function readField(g, map, f, white, res, ctx) {
     if (f.qtype === "single" || f.qtype === "multi") {
       const { on, doubt } = readColumn(g, map, f.columns[0], white, res, ctx, f);
       const ans = on.join("");
-      if (doubt.length) res.issues.push([f.qno, `unclear mark on ${doubt.join(",")}` + (ans ? ` (read ${ans})` : "")]);
-      if (f.qtype === "single" && on.length > 1) res.issues.push([f.qno, `more than one bubble marked (${ans})`]);
+      if (doubt.length) res.issues.push([f.qno, on.length
+        ? `dark mark on ${list(on)}, light mark on ${list(doubt)} - which one is the answer?`
+        : `only a light mark on ${list(doubt)} - is it filled?`]);
+      if (f.qtype === "single" && on.length > 1) res.issues.push([f.qno, `more than one bubble filled (${list(on)})`]);
       res.answers[f.qno] = ans;
       return;
     }
-    const chars = []; let bad = false;
+    const chars = [], why = []; let bad = false;
     for (const col of f.columns) {
       const { on, doubt } = readColumn(g, map, col, white, res, ctx, f);
-      if (on.length > 1 || doubt.length) { bad = true; chars.push("?"); } else chars.push(on[0] || "");
+      if (on.length > 1 || doubt.length) {
+        bad = true; chars.push("?");
+        if (f.kind === "q") why.push(on.length > 1 ? `box ${chars.length}: ${list(on)} both filled`
+          : on.length ? `box ${chars.length}: ${on[0]} dark, ${list(doubt)} light`
+          : `box ${chars.length}: only a light mark on ${list(doubt)}`);
+      } else chars.push(on[0] || "");
     }
     if (f.kind === "testid") {
       const t = chars.map(c => c || " ").join("").trim();
@@ -510,7 +532,7 @@
       return;
     }
     const raw = `${sign}${ipS || "0"}` + (dpS ? `.${dpS}` : "");
-    if (raw.includes("?") || bad) { res.answers[f.qno] = raw.replace(/ /g, "?"); res.issues.push([f.qno, `unclear digit (read ${raw})`]); return; }
+    if (raw.includes("?") || bad) { res.answers[f.qno] = raw.replace(/ /g, "?"); res.issues.push([f.qno, `digits read as ${raw}` + (why.length ? ` (${why.join("; ")})` : "")]); return; }
     const val = parseFloat(raw);
     res.answers[f.qno] = Number.isInteger(val) ? String(val) : String(+val.toFixed(6));
   }

@@ -266,7 +266,7 @@
         online ? cell("Attempts", h("b", {}, t.attempt_count || 0)) : null,
         cell("OMRs read", h("b", {}, `${t.result_count}`), h("small", {}, ` / ${t.student_count}`))),
       names.length ? h("div", { class: "ec-batches", title: names.join(", ") }, names.slice(0, 2).map(n => h("span", {}, n)), names.length > 2 ? h("span", { class: "more" }, `+${names.length - 2}`) : null) : null,
-      h("footer", {}, quick("Results", "results"), state.me.role === "central" ? quick("Questions", "questions") : quick("Toppers", "toppers"),
+      h("footer", {}, quick("Results", "results"), quick("Analysis", "analysis"),
         h("a", { class: "ec-q", href: `#/print/${t.id}`, onclick: e => e.stopPropagation() }, "Print"), h("span", { class: "ec-go", "aria-hidden": "true" }, "›")));
   }
   function testsTable(tests) {
@@ -848,12 +848,13 @@
     const t = await GET(`/api/tests/${id}`);
     window.TPImport.page(view, t, O.getLayout(t.sheet), h("a", { href: `#/tests/${id}/questions` }, "‹ Questions"));
   }, ["central"]);
-  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions|toppers))?$/, async (view, id, tab = "results") => {
+  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions|toppers|analysis))?$/, async (view, id, tab = "results") => {
+    if (tab === "toppers") tab = "analysis";
     await structure();
     const t = await GET(`/api/tests/${id}`);
     const layout = O.getLayout(t.sheet);
     const central = state.me.role === "central";
-    const tabs = [["results", "Results"], ["toppers", "Toppers"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
+    const tabs = [["results", "Results"], ["analysis", "Analysis"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
     const body = h("div", { style: "display:grid;gap:16px" });
     show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
@@ -864,7 +865,7 @@
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
       h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
-    if (tab === "toppers") return toppersTab(body, t);
+    if (tab === "analysis") { if (await resultsTab(body, t, layout, "analysis") !== false) await toppersTab(body, t, true); return; }
     if (tab === "questions" && central) return questionsTab(body, t, layout);
     if (tab === "sheets") return sheetsTab(body, t, layout);
     if (tab === "scans") return scansTab(body, t, layout);
@@ -1186,9 +1187,9 @@
 
 
   // ---- toppers: institute / zone / campus rank lists, best zone & campus, presence in top N
-  async function toppersTab(body, t) {
+  async function toppersTab(body, t, embedded) {
     const R = await GET(`/api/tests/${t.id}/toppers`);
-    if (!R.students.length) { body.append(h("div", { class: "card" }, h("p", { class: "empty" }, "No marks yet. Toppers appear once sheets are read or online tests are submitted."))); return; }
+    if (!R.students.length) { if (embedded) return; body.append(h("div", { class: "card" }, h("p", { class: "empty" }, "No marks yet. Toppers appear once sheets are read or online tests are submitted."))); return; }
     const role = state.me.role;
     const subj = R.subjects.length > 1 ? R.subjects : [];
     const nice = s => s.charAt(0) + s.slice(1).toLowerCase();
@@ -1645,12 +1646,13 @@
   }
 
   // ---- results & analysis
-  async function resultsTab(body, t, layout) {
+  async function resultsTab(body, t, layout, part = "results") {
     const a = await GET(`/api/tests/${t.id}/analysis`);
     const me = state.me;
     if (!a.students.length) {
-      body.append(h("div", { class: "card empty" }, h("h2", {}, "No sheets read yet"), h("p", {}, "Print sheets for the batches, then upload the scans in Upload scans.")));
-      return;
+      body.append(h("div", { class: "card empty" }, h("h2", {}, part === "analysis" ? "No marks yet" : "No sheets read yet"),
+        h("p", {}, part === "analysis" ? "Analysis appears once OMR sheets are read or online tests are submitted." : "Print sheets for the batches, then upload the scans in Upload scans.")));
+      return false;
     }
     const avg = a.students.reduce((x, s) => x + s.total, 0) / a.students.length;
     const sorted = a.students.slice().sort((x, y) => y.total - x.total);
@@ -1678,23 +1680,27 @@
           h("td", { class: "num" }, h("b", {}, tp.subjects[sub] ?? 0)), h("td", {}, tp.name || tp.roll)); }))))) : null;
     const hardest = a.questions.slice().sort((x, y) => x.right / x.n - y.right / y.n).slice(0, 10);
     if (a.keyCount < a.total_questions) body.append(h("p", { class: "pill warn", style: "padding:8px 12px;border-radius:6px;white-space:normal" }, `The answer key has ${a.keyCount} of ${a.total_questions} answers. Marks count only keyed questions.`));
-    body.append(
-      h("div", { class: "stats" }, h("div", { class: "stat" }, h("b", {}, `${a.students.length} / ${a.expected}`), h("span", {}, "Sheets read")),
+    const statsRow = h("div", { class: "stats" }, h("div", { class: "stat" }, h("b", {}, `${a.students.length} / ${a.expected}`), h("span", {}, "Sheets read")),
         h("div", { class: "stat gold" }, h("b", {}, avg.toFixed(1)), h("span", {}, `Average of ${a.max}`)),
         h("div", { class: "stat ok" }, h("b", {}, sorted[0].total), h("span", {}, `Top · ${sorted[0].name || sorted[0].roll}`)),
-        h("div", { class: "stat" }, h("b", {}, sorted[Math.floor(sorted.length / 2)].total), h("span", {}, "Median"))),
+        h("div", { class: "stat" }, h("b", {}, sorted[Math.floor(sorted.length / 2)].total), h("span", {}, "Median")));
+    if (part === "analysis") {
+      body.append(statsRow,
       ...(subjectCard ? [subjectCard] : []),
       h("div", { class: multi ? "stack" : "grid3" }, groupTable("Zones", a.by_zone), groupTable("Campuses", a.by_campus), groupTable("Batches", a.by_batch)),
+      h("div", { class: "card" }, h("h2", {}, "Questions with the fewest right answers"), h("div", { class: "bars" }, hardest.map(q => {
+        const pct = Math.round(q.right / q.n * 100);
+        return h("div", { class: "barrow" }, h("span", { class: "mono" }, `Q${q.q}`), h("div", { class: "meter" }, h("i", { style: `width:${Math.max(1, pct)}%` })), h("span", { class: "num" }, `${pct}% right`));
+      }))));
+      return;
+    }
+    body.append(statsRow,
       h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Students"), h("div", { class: "row" }, h("button", { class: "btn small ghost", type: "button", onclick: () => {
         download(`results_${t.code}.csv`, csv([["rank", "roll", "name", "zone", "campus", "batch", "total", ...a.subjects, "correct", "wrong", "blank", "campus rank", "batch rank"],
           ...sorted.map(s => [s.rank_all, s.roll, s.name, zoneName(s.zone_id), campusName(s.campus_id), (batchOf(s.batch_id) || {}).name, s.total, ...a.subjects.map(x => s.subjects[x] ?? 0), s.correct, s.wrong, s.blank, s.rank_campus, s.rank_batch])]));
       } }, "Download CSV"))),
         h("div", { class: "row" }, fb.els),
-        h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Rank", "Roll", "Name", "Batch", "Total", ...a.subjects.map(s => s[0] + s.slice(1).toLowerCase()), "Right", "Wrong", "Blank", "Campus rank", "Batch rank"].map(x => h("th", {}, x)))), tbody))),
-      h("div", { class: "card" }, h("h2", {}, "Questions with the fewest right answers"), h("div", { class: "bars" }, hardest.map(q => {
-        const pct = Math.round(q.right / q.n * 100);
-        return h("div", { class: "barrow" }, h("span", { class: "mono" }, `Q${q.q}`), h("div", { class: "meter" }, h("i", { style: `width:${Math.max(1, pct)}%` })), h("span", { class: "num" }, `${pct}% right`));
-      }))));
+        h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Rank", "Roll", "Name", "Batch", "Total", ...a.subjects.map(s => s[0] + s.slice(1).toLowerCase()), "Right", "Wrong", "Blank", "Campus rank", "Batch rank"].map(x => h("th", {}, x)))), tbody))));
     drawTable();
   }
 

@@ -1876,7 +1876,7 @@
     const cap = x => (x ? x[0].toUpperCase() + x.slice(1).toLowerCase() : "");
     const RES = { wrong: ["Wrong", "bad"], blank: ["Skipped", ""], partial: ["Partly right", "warn"] };
     let pref = {}; try { pref = JSON.parse(localStorage.getItem("tp-mistakes") || "{}"); } catch (e) { pref = {}; }
-    const keep = () => { try { localStorage.setItem("tp-mistakes", JSON.stringify({ type: fType.value, sub: fSub.value, test: fTest.value, sort: fSort.value, hide: fHide.checked })); } catch (e) { /* ignore */ } };
+    const keep = () => { try { localStorage.setItem("tp-mistakes", JSON.stringify({ type: fType.value, sub: fSub.value, ch: fCh.value, tp: fTp.value, test: fTest.value, sort: fSort.value, hide: fHide.checked })); } catch (e) { /* ignore */ } };
     const sel = (id, label, opts, v) => h("select", { id, "aria-label": label }, opts.map(([k, t]) => h("option", { value: k, selected: v === k }, t)));
     const SUBJ_ORDER = ["physics", "chemistry", "mathematics", "maths", "biology", "botany", "zoology"];
     const subjects = [...new Set(r.items.map(i => cap(i.subject)))].sort((a, b) => ((SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99)) || a.localeCompare(b));
@@ -1885,6 +1885,18 @@
     const fSub = sel("mk-sub", "Subject", [["", "All subjects"], ...subjects.map(s => [s, s])], pref.sub || "");
     const fTest = sel("mk-test", "Test", [["", "All tests"], ...tests], pref.test || "");
     const fHide = h("input", { type: "checkbox", id: "mk-hide", checked: pref.hide !== false });
+    // chapter and subtopic lists follow the subject (and chapter) chosen
+    const fCh = h("select", { id: "mk-ch", "aria-label": "Chapter" }), fTp = h("select", { id: "mk-tp", "aria-label": "Subtopic" });
+    const NONE = "__none", val = el => (el.value === NONE ? "" : el.value), any = el => el.disabled || el.value === "";
+    const fill = (el, first, vals, want) => { el.replaceChildren(h("option", { value: "" }, first), ...vals.map(v => h("option", { value: v || NONE }, v || "Not tagged")));
+      el.value = [...el.options].some(o => o.value === want) ? want : ""; };
+    const syncLists = (wantCh, wantTp) => {
+      const inSub = r.items.filter(i => !fSub.value || cap(i.subject) === fSub.value);
+      fill(fCh, "All chapters", [...new Set(inSub.map(i => i.chapter))].sort((a, b) => (!a - !b) || a.localeCompare(b)), wantCh);
+      const inCh = inSub.filter(i => any(fCh) || i.chapter === val(fCh));
+      fill(fTp, "All subtopics", [...new Set(inCh.map(i => i.topic))].sort((a, b) => (!a - !b) || a.localeCompare(b)), wantTp);
+      fTp.disabled = !fCh.value;
+    };
     const fSort = sel("mk-sort", "Sort chapters", [["az", "Chapters A–Z"], ["most", "Most mistakes first"], ["recent", "Latest test first"]], pref.sort || "az");
     const box = h("div", { style: "display:grid;gap:16px" }), tiles = h("div", { class: "stats" });
     const qCache = new Map();
@@ -1929,7 +1941,8 @@
 
     function draw() {
       keep();
-      const list = r.items.filter(i => (!fType.value || i.result === fType.value) && (!fSub.value || cap(i.subject) === fSub.value) && (!fTest.value || String(i.test_id) === fTest.value));
+      const list = r.items.filter(i => (!fType.value || i.result === fType.value) && (!fSub.value || cap(i.subject) === fSub.value) && (!fTest.value || String(i.test_id) === fTest.value)
+        && (any(fCh) || i.chapter === val(fCh)) && (any(fTp) || i.topic === val(fTp)));
       const cnt = k => list.filter(i => i.result === k).length;
       show(tiles,
         h("div", { class: "stat warn" }, h("b", {}, cnt("wrong")), h("span", {}, "Wrong")),
@@ -1968,10 +1981,14 @@
       }),
       r.noQuestion.length ? h("p", { class: "small muted", style: "margin:0" }, `Not listed: ${r.noQuestion.map(x => `${x.count} from ${x.code}`).join(", ")}. Those tests have only an answer key in the portal, so their questions can't be shown.`) : null);
     }
-    [fType, fSub, fTest, fSort, fHide].forEach(f => (f.onchange = draw));
+    [fType, fTest, fSort, fHide].forEach(f => (f.onchange = draw));
+    fSub.onchange = () => { syncLists("", ""); draw(); };
+    fCh.onchange = () => { syncLists(fCh.value, ""); draw(); };
+    fTp.onchange = draw;
+    syncLists(pref.ch || "", pref.tp || "");
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "My mistakes"), h("p", { class: "sub" }, "Every question you got wrong or skipped, in all your tests so far. Tap one to try it again and see the solution."))),
       tiles,
-      h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fTest, fSort,
+      h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fCh, fTp, fTest, fSort,
         h("label", { class: "imp-check" }, fHide, h("span", {}, "Hide the answer until I tap Show")))),
       box);
     draw();

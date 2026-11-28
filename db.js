@@ -38,6 +38,7 @@ const TABLES = [
      started_at BIGINT NOT NULL, ends_at BIGINT NOT NULL, state TEXT NOT NULL DEFAULT '{}', saved_at BIGINT, submitted_at BIGINT, UNIQUE(test_id, student_id))`,
   `settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
   `images (id TEXT PRIMARY KEY, type TEXT NOT NULL, data TEXT NOT NULL)`,
+  `audit (id {ID}, at BIGINT NOT NULL, user_id INTEGER, who TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')`,
   `test_questions (test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE, qno INTEGER NOT NULL,
      question_id INTEGER NOT NULL REFERENCES questions(id), PRIMARY KEY(test_id, qno))`,
   `results (id {ID}, test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,

@@ -181,27 +181,77 @@ app.get("/api/structure", auth, admin, wrap(async req => {
                       FROM batches b WHERE ${inList("b.campus_id", scope)} ORDER BY b.level, b.name`);
   return { zones, campuses, batches };
 }));
-app.post("/api/zones", auth, central, wrap(async req => ({ id: await insert("INSERT INTO zones (name) VALUES (?)", str(req.body.name, 80) || bad("Zone name is needed.")) })));
-app.patch("/api/zones/:id", auth, central, wrap(async req => { await run("UPDATE zones SET name=? WHERE id=?", str(req.body.name, 80) || bad("Name is needed."), req.params.id); return { ok: true }; }));
-app.delete("/api/zones/:id", auth, central, wrap(async req => { await run("DELETE FROM zones WHERE id=?", req.params.id); return { ok: true }; }));
-app.post("/api/campuses", auth, central, wrap(async req => {
-  if (!(await q1("SELECT id FROM zones WHERE id=?", req.body.zone_id))) bad("Choose a zone.");
-  return { id: await insert("INSERT INTO campuses (zone_id, name) VALUES (?,?)", req.body.zone_id, str(req.body.name, 80) || bad("Campus name is needed.")) };
+// a log of changes to zones, campuses and batches: who did what, when
+async function audit(req, action, detail) {
+  try { await run("INSERT INTO audit (at, user_id, who, action, detail) VALUES (?,?,?,?,?)", Date.now(), req.user.id, req.user.name || req.user.username, action, String(detail).slice(0, 300)); } catch (e) { /* never block the change */ }
+}
+app.get("/api/structure/log", auth, central, wrap(async () => qa("SELECT at, who, action, detail FROM audit ORDER BY id DESC LIMIT 30")));
+const NAMED = {
+  zone: { table: "zones", label: "zone", name: id => q1("SELECT name FROM zones WHERE id=?", id) },
+  campus: { table: "campuses", label: "campus", name: id => q1("SELECT name FROM campuses WHERE id=?", id) },
+  batch: { table: "batches", label: "batch", name: id => q1("SELECT b.name || ' (' || c.name || ')' AS name FROM batches b JOIN campuses c ON c.id=b.campus_id WHERE b.id=?", id) },
+};
+// what still depends on a zone / campus / batch: it can be removed only when this list is empty
+async function blockers(kind, id) {
+  const n = async (sql, ...a) => (await q1(sql, ...a)).n, out = [], plural = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  if (kind === "zone") {
+    const c = await n("SELECT COUNT(*) AS n FROM campuses WHERE zone_id=?", id); if (c) out.push(`It still has ${plural(c, "campus").replace("campuss", "campuses")}. Remove those campuses first.`);
+    const a = await n("SELECT COUNT(*) AS n FROM users WHERE zone_id=? AND role<>'student' AND campus_id IS NULL", id); if (a) out.push(`${plural(a, "admin account")} belong to this zone. Move or remove them on the Admins page first.`);
+  } else if (kind === "campus") {
+    const b = await n("SELECT COUNT(*) AS n FROM batches WHERE campus_id=?", id); if (b) out.push(`It still has ${plural(b, "batch").replace("batchs", "batches")}. Remove them first.`);
+    const s = await n("SELECT COUNT(*) AS n FROM users WHERE campus_id=? AND role='student'", id); if (s) out.push(`${plural(s, "student")} belong to this campus.`);
+    const a = await n("SELECT COUNT(*) AS n FROM users WHERE campus_id=? AND role<>'student'", id); if (a) out.push(`${plural(a, "admin account")} belong to this campus. Move or remove them on the Admins page first.`);
+  } else {
+    const s = await n("SELECT COUNT(*) AS n FROM users WHERE batch_id=? AND role='student'", id); if (s) out.push(`${plural(s, "student")} are in this batch (including inactive ones). Move them to another batch on the Students page first.`);
+    const t = await n("SELECT COUNT(*) AS n FROM test_batches WHERE batch_id=?", id); if (t) out.push(`${plural(t, "test")} ${t === 1 ? "is" : "are"} given to this batch. Its results stay safe only while the batch exists.`);
+  }
+  return out;
+}
+app.get("/api/structure/:kind/:id/check", auth, central, wrap(async req => {
+  const K = NAMED[req.params.kind] || bad("Unknown item."), id = Number(req.params.id), row = (await K.name(id)) || bad("Not found.");
+  return { name: row.name, blockers: await blockers(req.params.kind, id) };
 }));
-app.patch("/api/campuses/:id", auth, central, wrap(async req => { await run("UPDATE campuses SET name=? WHERE id=?", str(req.body.name, 80) || bad("Name is needed."), req.params.id); return { ok: true }; }));
-app.delete("/api/campuses/:id", auth, central, wrap(async req => { await run("DELETE FROM campuses WHERE id=?", req.params.id); return { ok: true }; }));
+// removing needs: nothing depending on it, its exact name typed, and the admin's own password
+app.post("/api/structure/:kind/:id/remove", auth, central, wrap(async req => {
+  const K = NAMED[req.params.kind] || bad("Unknown item."), id = Number(req.params.id), row = (await K.name(id)) || bad("Not found.");
+  const typed = String((req.body || {}).confirm || "").trim().toLowerCase(), want = (req.params.kind === "batch" ? row.name.replace(/ \(.*\)$/, "") : row.name).trim().toLowerCase();
+  if (typed !== want) bad(`Type the name exactly as shown to confirm.`);
+  const me = await q1("SELECT pass FROM users WHERE id=?", req.user.id);
+  if (!(await checkPassword(String((req.body || {}).password || ""), me.pass))) bad("Your password is not correct.");
+  const why = await blockers(req.params.kind, id); if (why.length) bad(why[0]);
+  await run(`DELETE FROM ${K.table} WHERE id=?`, id);
+  await audit(req, `Removed ${K.label}`, row.name);
+  return { ok: true };
+}));
+app.post("/api/zones", auth, central, wrap(async req => { const name = str(req.body.name, 80) || bad("Zone name is needed.");
+  const id = await insert("INSERT INTO zones (name) VALUES (?)", name); await audit(req, "Added zone", name); return { id }; }));
+app.patch("/api/zones/:id", auth, central, wrap(async req => { const old = await q1("SELECT name FROM zones WHERE id=?", req.params.id), name = str(req.body.name, 80) || bad("Name is needed.");
+  await run("UPDATE zones SET name=? WHERE id=?", name, req.params.id); await audit(req, "Renamed zone", `${old ? old.name : "?"} → ${name}`); return { ok: true }; }));
+app.delete("/api/zones/:id", auth, central, wrap(async () => bad("Use Remove on the Zones & batches page.")));
+app.post("/api/campuses", auth, central, wrap(async req => {
+  const z = (await q1("SELECT id, name FROM zones WHERE id=?", req.body.zone_id)) || bad("Choose a zone.");
+  const name = str(req.body.name, 80) || bad("Campus name is needed.");
+  const id = await insert("INSERT INTO campuses (zone_id, name) VALUES (?,?)", z.id, name); await audit(req, "Added campus", `${name} (${z.name})`); return { id };
+}));
+app.patch("/api/campuses/:id", auth, central, wrap(async req => { const old = await q1("SELECT name FROM campuses WHERE id=?", req.params.id), name = str(req.body.name, 80) || bad("Name is needed.");
+  await run("UPDATE campuses SET name=? WHERE id=?", name, req.params.id); await audit(req, "Renamed campus", `${old ? old.name : "?"} → ${name}`); return { ok: true }; }));
+app.delete("/api/campuses/:id", auth, central, wrap(async () => bad("Use Remove on the Zones & batches page.")));
 const LEVELS = ["11", "12", "Dropper"];
 app.post("/api/batches", auth, central, wrap(async req => {
   if (!(await q1("SELECT id FROM campuses WHERE id=?", req.body.campus_id))) bad("Choose a campus.");
   const level = LEVELS.includes(req.body.level) ? req.body.level : bad("Choose 11, 12 or Dropper.");
-  return { id: await insert("INSERT INTO batches (campus_id, name, level, year) VALUES (?,?,?,?)", req.body.campus_id, str(req.body.name, 60) || bad("Batch name is needed."), level, str(req.body.year, 20)) };
+  const name = str(req.body.name, 60) || bad("Batch name is needed."), c = await q1("SELECT name FROM campuses WHERE id=?", req.body.campus_id);
+  const id = await insert("INSERT INTO batches (campus_id, name, level, year) VALUES (?,?,?,?)", req.body.campus_id, name, level, str(req.body.year, 20));
+  await audit(req, "Added batch", `${name} (${c.name})`); return { id };
 }));
 app.patch("/api/batches/:id", auth, central, wrap(async req => {
   const level = LEVELS.includes(req.body.level) ? req.body.level : bad("Choose 11, 12 or Dropper.");
-  await run("UPDATE batches SET name=?, level=?, year=? WHERE id=?", str(req.body.name, 60) || bad("Name is needed."), level, str(req.body.year, 20), req.params.id);
+  const old = await q1("SELECT name, level FROM batches WHERE id=?", req.params.id), name = str(req.body.name, 60) || bad("Name is needed.");
+  await run("UPDATE batches SET name=?, level=?, year=? WHERE id=?", name, level, str(req.body.year, 20), req.params.id);
+  if (old && (old.name !== name || old.level !== level)) await audit(req, "Changed batch", `${old.name} → ${name} (${level === "Dropper" ? "Dropper" : level + "th"})`);
   return { ok: true };
 }));
-app.delete("/api/batches/:id", auth, central, wrap(async req => { await run("DELETE FROM batches WHERE id=?", req.params.id); return { ok: true }; }));
+app.delete("/api/batches/:id", auth, central, wrap(async () => bad("Use Remove on the Zones & batches page.")));
 
 // ------------------------------------------------------------------ people
 async function placeFor(batchId, campusId, zoneId) {

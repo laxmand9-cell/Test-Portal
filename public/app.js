@@ -341,36 +341,99 @@
   route(/^\/structure$/, async view => {
     const s = await structure(true);
     const central = state.me.role === "central";
-    const tree = h("div", { class: "tree" });
+    const box = h("div", { class: "st-zones" }), tiles = h("div", { class: "stats" }), logBox = h("div");
+    const q = h("input", { id: "st-find", type: "search", placeholder: "Find a campus or batch", "aria-label": "Find a campus or batch" });
+    const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + "s"}`;
+    const zoneStats = z => { const cs = s.campuses.filter(c => c.zone_id === z.id), bs = s.batches.filter(b => cs.some(c => c.id === b.campus_id));
+      return { cs, bs, students: cs.reduce((a, c) => a + (c.students || 0), 0) }; };
+    // "⋯" menu: rename / remove live here, away from one-tap reach
+    function more(label, items) {
+      const menu = h("div", { class: "more-menu", role: "menu", hidden: true }, items.map(([t, fn, danger]) => h("button", { type: "button", role: "menuitem", class: danger ? "danger" : "", onclick: () => { close(); fn(); } }, t)));
+      const btn = h("button", { class: "more-btn", type: "button", "aria-label": `More for ${label}`, "aria-haspopup": "menu", "aria-expanded": "false", onclick: e => { e.stopPropagation(); menu.hidden ? open() : close(); } },
+        h("span", { "aria-hidden": "true" }, "⋯"));
+      const outside = e => { if (!wrap.contains(e.target)) close(); }, esc = e => { if (e.key === "Escape") { close(); btn.focus(); } };
+      function open() { document.querySelectorAll(".more-menu").forEach(m => (m.hidden = true)); menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("click", outside); document.addEventListener("keydown", esc); }
+      function close() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("click", outside); document.removeEventListener("keydown", esc); }
+      const wrap = h("div", { class: "more" }, btn, menu);
+      return wrap;
+    }
     const draw = () => {
-      tree.replaceChildren();
-      if (!s.zones.length) tree.append(h("p", { class: "empty" }, central ? "No zones yet. Add the first zone above." : "Nothing assigned to you yet."));
-      for (const z of s.zones) {
-        const cs = s.campuses.filter(c => c.zone_id === z.id);
-        tree.append(h("div", { class: "zone" },
-          h("div", { class: "zone-h" }, h("h2", {}, `${z.name} zone`), central ? h("div", { class: "row" },
-            h("button", { class: "btn small ghost", type: "button", onclick: () => nameBox("Add campus to " + z.name, "", n => POST("/api/campuses", { zone_id: z.id, name: n })) }, "Add campus"),
-            h("button", { class: "btn small ghost", type: "button", onclick: () => nameBox("Rename zone", z.name, n => PATCH(`/api/zones/${z.id}`, { name: n })) }, "Rename"),
-            h("button", { class: "btn small danger", type: "button", onclick: () => confirmBox(`Remove ${z.name} zone?`, "Remove", () => act(() => DEL(`/api/zones/${z.id}`))) }, "Remove")) : null),
-          cs.length ? cs.map(c => {
-            const bs = s.batches.filter(b => b.campus_id === c.id);
-            return h("div", { class: "campus" },
-              h("div", { class: "campus-h" }, h("b", {}, c.name, h("span", { class: "muted small" }, ` · ${c.students} students`)), central ? h("div", { class: "row" },
-                h("button", { class: "btn small ghost", type: "button", onclick: () => batchBox(c) }, "Add batch"),
-                h("button", { class: "btn small ghost", type: "button", onclick: () => nameBox("Rename campus", c.name, n => PATCH(`/api/campuses/${c.id}`, { name: n })) }, "Rename"),
-                h("button", { class: "btn small danger", type: "button", onclick: () => confirmBox(`Remove ${c.name} campus?`, "Remove", () => act(() => DEL(`/api/campuses/${c.id}`))) }, "Remove")) : null),
-              h("div", { class: "chips" }, bs.length ? bs.map(b => h("span", { class: "chip" }, h("a", { href: `#/students?batch=${b.id}` }, `${b.name}`), h("span", { class: "muted" }, `${LEVEL[b.level]} · ${b.students}`),
-                central ? h("button", { type: "button", title: "Edit batch", "aria-label": `Edit ${b.name}`, onclick: () => batchBox(c, b) }, "✎") : null)) : h("span", { class: "muted small" }, "No batches yet")));
-          }) : h("span", { class: "muted small" }, "No campuses yet")));
-      }
+      const f = q.value.trim().toLowerCase();
+      const allStudents = s.campuses.reduce((a, c) => a + (c.students || 0), 0);
+      show(tiles, ...[[s.zones.length, "Zones", "structure", "t-violet"], [s.campuses.length, "Campuses", "home", "t-blue"], [s.batches.length, "Batches", "students", "t-teal"], [allStudents, "Students", "account", "t-gold"]]
+        .map(([n, l, ic, t]) => h("div", { class: "stat si " + t }, h("span", { class: "si-ic" }, navIcon(ic)), h("b", {}, n), h("span", {}, l))));
+      if (!s.zones.length) { show(box, h("div", { class: "card" }, h("p", { class: "empty" }, central ? "No zones yet. Use Add zone to create the first one." : "Nothing assigned to you yet."))); return; }
+      const shown = s.zones.map(z => {
+        const { cs, bs, students } = zoneStats(z);
+        const campusCards = cs.map(c => {
+          const cb = s.batches.filter(b => b.campus_id === c.id);
+          const hit = !f || z.name.toLowerCase().includes(f) || c.name.toLowerCase().includes(f) || cb.some(b => b.name.toLowerCase().includes(f));
+          if (!hit) return null;
+          const groups = ["11", "12", "Dropper"].map(l => [l, cb.filter(b => b.level === l)]).filter(([, l]) => l.length);
+          return h("div", { class: "st-campus" },
+            h("div", { class: "st-campus-h" }, h("div", { class: "st-campus-t" }, h("b", {}, c.name), h("span", { class: "small muted" }, `${plural(c.students || 0, "student")} · ${plural(cb.length, "batch", "batches")}`)),
+              central ? more(c.name, [["Rename campus", () => nameBox("Rename campus", c.name, n => PATCH(`/api/campuses/${c.id}`, { name: n }))], ["Remove campus…", () => removeBox("campus", c.id), true]]) : null),
+            groups.length ? groups.map(([l, list]) => h("div", { class: "st-level" }, h("span", { class: "st-lv lv-" + l }, LEVEL[l]),
+              h("div", { class: "st-batches" }, list.map(b => h("span", { class: "st-batch" + (f && b.name.toLowerCase().includes(f) ? " hit" : "") },
+                h("a", { href: `#/students?batch=${b.id}`, title: `Students in ${b.name}` }, h("b", {}, b.name), h("span", {}, b.students || 0)),
+                central ? h("button", { type: "button", class: "st-edit", "aria-label": `Edit batch ${b.name}`, title: "Edit batch", onclick: () => batchBox(c, b) }, "✎") : null)))))
+              : h("p", { class: "small muted", style: "margin:0" }, "No batches yet."),
+            central ? h("button", { class: "st-add", type: "button", onclick: () => batchBox(c) }, "+ Add batch") : null);
+        }).filter(Boolean);
+        if (f && !campusCards.length && !z.name.toLowerCase().includes(f)) return null;
+        return h("section", { class: "st-zone" },
+          h("header", { class: "st-zone-h" }, h("span", { class: "si-ic t-violet" }, navIcon("structure")),
+            h("div", { class: "st-zone-t" }, h("h2", {}, z.name), h("span", { class: "small muted" }, `${plural(cs.length, "campus", "campuses")} · ${plural(bs.length, "batch", "batches")} · ${plural(students, "student")}`)),
+            central ? h("button", { class: "btn small ghost", type: "button", onclick: () => nameBox("New campus in " + z.name, "", n => POST("/api/campuses", { zone_id: z.id, name: n })) }, "+ Campus") : null,
+            central ? more(z.name, [["Rename zone", () => nameBox("Rename zone", z.name, n => PATCH(`/api/zones/${z.id}`, { name: n }))], ["Remove zone…", () => removeBox("zone", z.id), true]]) : null),
+          campusCards.length ? h("div", { class: "st-campuses" }, campusCards) : h("p", { class: "small muted", style: "margin:0" }, "No campuses yet."));
+      }).filter(Boolean);
+      show(box, ...(shown.length ? shown : [h("div", { class: "card" }, h("p", { class: "empty" }, "Nothing matches that name."))]));
     };
-    async function act(fn) { try { await fn(); Object.assign(s, await structure(true)); draw(); } catch (e) { toast(e.message); } }
+    async function drawLog() {
+      if (!central) return;
+      let rows = []; try { rows = await GET("/api/structure/log"); } catch (e) { return; }
+      show(logBox, rows.length ? h("details", { class: "card st-log" }, h("summary", {}, h("b", {}, "Recent changes"), h("span", { class: "small muted" }, ` · last ${rows.length}`)),
+        h("ul", {}, rows.map(r => h("li", {}, h("span", { class: "small muted" }, new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })),
+          h("span", {}, h("b", {}, r.action), ` · ${r.detail}`), h("span", { class: "small muted" }, `by ${r.who}`))))) : null);
+    }
+    async function act(fn) { try { await fn(); Object.assign(s, await structure(true)); draw(); drawLog(); } catch (e) { toast(e.message); } }
     function nameBox(title, val, save) {
       modal((b, close) => {
         const i = h("input", { id: "name-box", value: val, maxlength: 80 });
         const err = h("p", { class: "err small" });
-        b.append(h("form", { class: "card", style: "border:0;padding:0", onsubmit: async e => { e.preventDefault(); try { await save(i.value); close(); act(async () => {}); } catch (x) { err.textContent = x.message; } } },
+        b.append(h("form", { class: "card", style: "border:0;padding:0;box-shadow:none", onsubmit: async e => { e.preventDefault(); try { await save(i.value); close(); act(async () => {}); } catch (x) { err.textContent = x.message; } } },
           h("h2", {}, title), field("Name", i), err, h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Save"), h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel"))));
+        setTimeout(() => i.focus(), 50);
+      });
+    }
+    // removing: first show what still depends on it; when nothing does, ask for the exact name and the admin's password
+    async function removeBox(kind, id) {
+      let c; try { c = await GET(`/api/structure/${kind}/${id}/check`); } catch (e) { toast(e.message); return; }
+      const what = { zone: "zone", campus: "campus", batch: "batch" }[kind], typeName = kind === "batch" ? c.name.replace(/ \(.*\)$/, "") : c.name;
+      modal((b, close) => {
+        if (c.blockers.length) {
+          b.append(h("div", { class: "danger-box" }, h("h2", {}, `${c.name} can't be removed yet`),
+            h("ul", {}, c.blockers.map(x => h("li", {}, x))),
+            h("p", { class: "small muted", style: "margin:0" }, `This protects marks and accounts: a ${what} can be removed only when nothing is attached to it.`),
+            h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: close }, "OK"))));
+          return;
+        }
+        const nm = h("input", { id: "rm-name", autocomplete: "off", spellcheck: "false", placeholder: typeName });
+        const pw = h("input", { id: "rm-pass", type: "password", autocomplete: "current-password" });
+        const err = h("p", { class: "err small" });
+        const go = h("button", { class: "btn danger-solid", type: "submit", disabled: true }, `Remove ${what}`);
+        const check = () => (go.disabled = nm.value.trim().toLowerCase() !== typeName.trim().toLowerCase() || !pw.value);
+        nm.oninput = check; pw.oninput = check;
+        b.append(h("form", { class: "danger-box", onsubmit: async e => { e.preventDefault(); go.disabled = true; err.textContent = "";
+            try { await POST(`/api/structure/${kind}/${id}/remove`, { confirm: nm.value, password: pw.value }); close(); toast(`${c.name} removed`); act(async () => {}); }
+            catch (x) { err.textContent = x.message; check(); } } },
+          h("h2", {}, `Remove ${c.name}?`),
+          h("p", { style: "margin:0" }, `This removes the ${what} for good. It can't be undone.`),
+          field(h("span", {}, "Type ", h("b", { class: "mono" }, typeName), " to confirm"), nm),
+          field("Your password", pw, "The password you log in with"), err,
+          h("div", { class: "row" }, go, h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel"))));
+        setTimeout(() => nm.focus(), 50);
       });
     }
     function batchBox(c, bt) {
@@ -382,16 +445,18 @@
         b.append(h("form", { onsubmit: async e => { e.preventDefault();
             try { bt ? await PATCH(`/api/batches/${bt.id}`, { name: n.value, level: l.value, year: y.value }) : await POST("/api/batches", { campus_id: c.id, name: n.value, level: l.value, year: y.value }); close(); act(async () => {}); }
             catch (x) { err.textContent = x.message; } }, style: "display:grid;gap:12px" },
-          h("h2", {}, bt ? `Edit batch` : `New batch in ${c.name}`), field("Batch name", n), field("Class", l), field("Academic year", y, "Optional"), err,
-          h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Save"),
-            bt ? h("button", { class: "btn danger", type: "button", onclick: () => { close(); confirmBox(`Remove batch ${bt.name}?`, "Remove", () => act(() => DEL(`/api/batches/${bt.id}`))); } }, "Remove") : null,
-            h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel"))));
+          h("h2", {}, bt ? `Edit batch ${bt.name}` : `New batch in ${c.name}`), field("Batch name", n), field("Class", l), field("Academic year", y, "Optional"), err,
+          h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Save"), h("button", { class: "btn ghost", type: "button", onclick: close }, "Cancel")),
+          bt ? h("div", { class: "danger-zone" }, h("span", { class: "small muted" }, "Remove this batch only if it was made by mistake."),
+            h("button", { class: "link danger-link", type: "button", onclick: () => { close(); removeBox("batch", bt.id); } }, "Remove batch…")) : null));
       });
     }
+    q.oninput = draw;
     show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, central ? "Zones, campuses & batches" : "Campuses & batches"),
-      h("p", { class: "sub" }, "Batches are 11th, 12th or Dropper groups inside a campus. Click a batch to see its students.")),
-      central ? h("button", { class: "btn gold", type: "button", onclick: () => nameBox("New zone", "", n => POST("/api/zones", { name: n })) }, "Add zone") : null), tree);
-    draw();
+        h("p", { class: "sub" }, "Batches are 11th, 12th or Dropper groups inside a campus. Tap a batch to see its students.")),
+        central ? h("button", { class: "btn gold", type: "button", onclick: () => nameBox("New zone", "", n => POST("/api/zones", { name: n })) }, "+ Add zone") : null),
+      tiles, h("div", { class: "st-find" }, q), box, logBox);
+    draw(); drawLog();
   }, ["central", "zone", "campus"]);
 
   // ================================================================ students

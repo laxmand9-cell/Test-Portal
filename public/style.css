@@ -727,3 +727,44 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--n
 body.menu-open .bar { z-index: 60 }
 body.menu-open .scrim { z-index: 55 }
 .hero { background: radial-gradient(circle at 95% -40%, rgb(139 178 28 / .28), transparent 40%), radial-gradient(circle at -10% 130%, rgb(226 180 76 / .18), transparent 40%), linear-gradient(115deg, var(--frame-1), var(--frame-2) 70%, #25508f) }
+
+/* ---- zones, campuses & batches */
+.st-find input { max-width: 420px; background: var(--surface) }
+.st-zones { display: grid; gap: 18px }
+.st-zone { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.st-zone-h { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.st-zone-h .si-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--tb); color: var(--tc); flex: none }
+.st-zone-t { flex: 1 1 0; min-width: 0; display: grid }
+.st-zone-h { flex-wrap: nowrap }
+.st-campuses { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px }
+.st-campus { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; background: var(--sunk); align-content: start; min-width: 0 }
+.st-campus-h { display: flex; align-items: flex-start; gap: 8px }
+.st-campus-t { flex: 1; min-width: 0; display: grid }
+.st-level { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; align-items: start }
+.st-lv { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding-top: 5px }
+.st-batches { display: flex; flex-wrap: wrap; gap: 6px }
+.st-batch { display: inline-flex; align-items: stretch; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); overflow: hidden }
+.st-batch.hit { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft) }
+.st-batch a { display: inline-flex; align-items: center; gap: 7px; padding: 4px 6px 4px 11px; text-decoration: none; color: var(--fg); font-size: 13.5px }
+.st-batch a:hover { background: var(--gold-soft) }
+.st-batch a span { font-size: 11.5px; font-weight: 700; color: var(--muted); background: var(--sunk); border-radius: 999px; padding: 0 7px; min-width: 22px; text-align: center }
+.st-edit { border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; padding: 0 9px; font-size: 13px }
+.st-edit:hover { color: var(--navy); background: var(--sunk) }
+.st-add { justify-self: start; background: none; border: 1px dashed var(--line); border-radius: 999px; padding: 4px 12px; color: var(--navy); font: 600 13px var(--font); cursor: pointer }
+.st-add:hover { border-color: var(--navy) }
+.more { position: relative; flex: none }
+.more-btn { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; font-size: 18px; line-height: 1 }
+.more-btn:hover { background: var(--sunk) }
+.more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; min-width: 190px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgb(16 24 40 / .16); padding: 6px; display: grid; animation: tp-pop .16s ease both }
+.more-menu button { text-align: left; background: none; border: 0; padding: 9px 12px; border-radius: 8px; font: 500 14px var(--font); color: var(--fg); cursor: pointer }
+.more-menu button:hover { background: var(--sunk) }
+.more-menu button.danger { color: var(--bad) }
+.danger-box { display: grid; gap: 12px }
+.danger-box h2 { color: var(--bad) }
+.danger-box ul { margin: 0; padding-left: 20px; display: grid; gap: 6px }
+.btn.danger-solid { background: var(--bad); color: #fff }
+.danger-zone { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px }
+.danger-link { color: var(--bad) !important }
+.st-log summary { cursor: pointer } .st-log ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px }
+.st-log li { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 10px; font-size: 14px; border-top: 1px solid var(--line); padding-top: 8px }
+@media (max-width: 600px) { .st-log li { grid-template-columns: 1fr } }

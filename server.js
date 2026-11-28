@@ -681,8 +681,17 @@ async function studentReport(t, studentId) {
   const { scored, max, layout } = await scoreTest(t);
   const s = scored.find(x => x.student_id === studentId);
   if (!s) throw new HttpError(404, "No sheet read for this student yet.");
-  const linked = Object.fromEntries((await qa(`SELECT tq.qno, q.text, q.image, q.options, q.solution, q.chapter, q.fmt, q.source FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id))
-    .map(r => [r.qno, { text: r.text, image: r.image, options: JSON.parse(r.options || "[]"), solution: r.solution, chapter: r.chapter, fmt: r.fmt, source: r.source }]));
+  const linked = Object.fromEntries((await qa(`SELECT tq.qno, q.text, q.image, q.options, q.solution, q.chapter, q.topic, q.difficulty, q.fmt, q.source FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id))
+    .map(r => [r.qno, { text: r.text, image: r.image, options: JSON.parse(r.options || "[]"), solution: r.solution, chapter: r.chapter, topic: r.topic, level: r.difficulty, fmt: r.fmt, source: r.source }]));
+  // how the whole institute did on each question, and time spent (online tests)
+  const rightN = {}, tried = {};
+  for (const x of scored) for (const d of x.detail) { if (["correct", "bonus"].includes(d.result)) rightN[d.q] = (rightN[d.q] || 0) + 1; if (["correct", "bonus", "wrong", "partial"].includes(d.result)) tried[d.q] = (tried[d.q] || 0) + 1; }
+  const atts = await qa("SELECT student_id, started_at, submitted_at, state FROM attempts WHERE test_id=? AND submitted_at IS NOT NULL", t.id);
+  const fullOf = Object.fromEntries(OMR.questionIndex(layout).map(x => [x.qno, x.sec]));
+  const mineAtt = atts.find(a => a.student_id === studentId);
+  const timeOf = a => { try { return JSON.parse(a.state || "{}").time || {}; } catch (e) { return {}; } };
+  const myTime = mineAtt ? timeOf(mineAtt) : null, avgTime = {};
+  if (mineAtt) { for (const a of atts) { const tm = timeOf(a); for (const k in tm) avgTime[k] = (avgTime[k] || 0) + tm[k] / atts.length; } }
   const subjects = [...new Set(layout.sections.map(x => x.subject))];
   const avg = a => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : 0);
   const rankIn = (list, k) => { const mine = (s.subjects || {})[k] || 0; return { rank: 1 + list.filter(x => ((x.subjects || {})[k] || 0) > mine).length, of: list.length }; };
@@ -702,7 +711,10 @@ async function studentReport(t, studentId) {
     total: s.total, by_subject: s.subjects, correct: s.correct, partial: s.partial, wrong: s.wrong, blank: s.blank,
     rank_all: s.rank_all, rank_all_of: s.rank_all_of, rank_campus: s.rank_campus, rank_campus_of: s.rank_campus_of,
     rank_batch: s.rank_batch, rank_batch_of: s.rank_batch_of,
-    detail: s.detail.map(d => ({ ...d, question: linked[d.q] || null })) };
+    attempt: mineAtt ? { started_at: mineAtt.started_at, submitted_at: mineAtt.submitted_at, duration: t.duration || null } : null,
+    detail: s.detail.map(d => ({ ...d, full: (fullOf[d.q] || {}).marks ? fullOf[d.q].marks.correct : 0, question: linked[d.q] || null, right_pct: scored.length ? Math.round(((rightN[d.q] || 0) / scored.length) * 100) : 0,
+      tried_pct: scored.length ? Math.round(((tried[d.q] || 0) / scored.length) * 100) : 0,
+      time: myTime ? Math.round(myTime[d.q] || 0) : null, avg_time: myTime ? Math.round(avgTime[d.q] || 0) : null })) };
 }
 
 // ------------------------------------------------------------------ toppers of one test: rank lists, best zone / campus, counts in top N
@@ -980,7 +992,10 @@ app.get("/api/my/tests", auth, wrap(async req => {
   const out = [];
   for (const t of tests) {
     const rep = await studentReport(t, req.user.id);
-    out.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet: t.sheet, total: rep.total, max: rep.max,
+    const lay = layoutOf(t);
+    out.push({ id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet: t.sheet, total: rep.total, max: rep.max, questions: OMR.totalQ(lay),
+      duration: t.duration || DEFAULT_MIN[t.sheet] || null, attempt: rep.attempt, rank_all: rep.rank_all, rank_all_of: rep.rank_all_of, subjects: rep.subjects,
+      correct: rep.correct, wrong: rep.wrong, blank: rep.blank,
       rank_batch: rep.rank_batch, rank_batch_of: rep.rank_batch_of, by_subject: rep.by_subject, subject_max: rep.subject_max });
   }
   return out;

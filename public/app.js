@@ -1559,27 +1559,156 @@
 
   // ================================================================ student report (admin view + student view share this)
   function reportView(view, rep, back) {
+    const cap = x => (x ? x[0] + x.slice(1).toLowerCase() : "");
     const pct = rep.max ? Math.round((rep.total / rep.max) * 100) : 0;
-    const rows = rep.detail.map(d => {
-      const tone = d.result === "correct" || d.result === "bonus" ? "ok" : d.result === "partial" ? "warn" : d.result === "blank" ? "" : d.result === "wrong" ? "bad" : "";
-      const label = { correct: "Right", wrong: "Wrong", blank: "Not answered", partial: "Partly right", bonus: "Bonus", dropped: "Dropped", nokey: "No key", badkey: "—" }[d.result];
-      return { d, tone, label };
-    });
-    const filter = h("select", { id: "rep-filter", "aria-label": "Show" }, h("option", { value: "" }, "All questions"), h("option", { value: "wrong" }, "Wrong only"), h("option", { value: "blank" }, "Not answered"), h("option", { value: "correct" }, "Right only"));
-    const tb = h("tbody");
-    const qbox = h("div");
-    const draw = () => {
-      const f = filter.value;
-      const list = rows.filter(r => !f || r.d.result === f);
-      tb.replaceChildren(...list.map(({ d, tone, label }) => h("tr", {}, h("td", { class: "mono" }, `Q${d.q}`), h("td", {}, d.subject), h("td", { class: "mono" }, d.marked || "—"), h("td", { class: "mono" }, d.key || "—"),
-        h("td", {}, h("span", { class: "pill " + tone }, label)), h("td", { class: "num" }, d.marks))));
-      qbox.replaceChildren(...list.filter(r => r.d.question).map(({ d, tone, label }) => h("div", { class: "qcard" },
-        h("div", { class: "row" }, h("b", { class: "shrink" }, `Q${d.q}`), h("span", { class: "pill " + tone + " shrink" }, label), h("span", { class: "small muted" }, d.question.chapter || "")),
-        d.question.fmt === "html" ? richNode(d.question.text) : d.question.text ? h("div", { style: "white-space:pre-wrap" }, d.question.text) : null, d.question.image ? h("img", { src: d.question.image, alt: `Question ${d.q}` }) : null,
-        d.question.options.length ? h("div", { class: "opts small" }, d.question.options.map((o, i) => o ? h("div", {}, `(${"ABCD"[i]}) ${o}`) : null)) : null,
-        h("div", { class: "small" }, `Your answer: ${d.marked || "—"} · Correct: ${d.key}`), d.question.solution ? h("details", {}, h("summary", {}, "Solution"), d.question.fmt === "html" ? richNode(d.question.solution) : h("div", { style: "white-space:pre-wrap" }, d.question.solution)) : null)));
+    const RES = { correct: ["Right", "ok"], bonus: ["Bonus", "ok"], partial: ["Partly right", "warn"], wrong: ["Wrong", "bad"], blank: ["Not answered", ""], dropped: ["Dropped", ""], nokey: ["No key", ""], badkey: ["—", ""] };
+    const D = rep.detail;
+    const isRight = d => d.result === "correct" || d.result === "bonus";
+    const missed = d => d.result === "wrong" || d.result === "blank" || d.result === "partial";
+    const fmtT = s => (s == null ? "—" : s < 60 ? `${s}s` : s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`);
+    const hasTime = !!rep.attempt && D.some(d => d.time);
+    const ch = d => (d.question && d.question.chapter) || "";
+    const lv = d => (d.question && d.question.level) || "";
+    const when = ms => new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+    // ---- one question in a pop-up, with your answer, the key, how others did, and the solution
+    function openQ(list, i) {
+      let cur = i, bodyEl, closeFn;
+      const keys = e => { if ($("#modal").hidden) { document.removeEventListener("keydown", keys); return; }
+        if (e.key === "ArrowRight") step(1); else if (e.key === "ArrowLeft") step(-1); else if (e.key === "Escape") closeFn(); };
+      const step = k => { if (cur + k >= 0 && cur + k < list.length) { cur += k; draw(); } };
+      function draw() {
+        const d = list[cur], q = d.question, [label, tone] = RES[d.result] || [d.result, ""];
+        show(bodyEl,
+          h("div", { class: "qv-head" }, h("b", {}, `Question ${d.q}`), h("span", { class: "pill " + tone }, label), h("span", { class: "small muted" }, `${cur + 1} of ${list.length}`),
+            h("button", { class: "btn ghost small shrink", type: "button", "aria-label": "Close", onclick: () => closeFn() }, "✕")),
+          h("div", { class: "chips" }, [cap(d.subject), q && q.chapter, q && q.topic].filter(Boolean).map(t => h("span", { class: "chip" }, t)), q && q.level ? h("span", { class: "pill lv" + (QLEVELS.indexOf(q.level) + 1) }, q.level) : null),
+          q ? (q.fmt === "html" ? richNode(q.text) : q.text ? h("div", { style: "white-space:pre-wrap" }, q.text) : null) : h("p", { class: "muted small" }, "The question text is not linked to this test."),
+          q && q.image ? h("img", { src: q.image, alt: `Question ${d.q}`, style: "max-width:100%;border-radius:4px" }) : null,
+          q && q.options && q.options.some(Boolean) ? h("div", { class: "opts" }, q.options.map((o, k) => o ? h("div", {}, `(${"ABCD"[k]}) ${o}`) : null)) : null,
+          h("div", { class: "ra-facts" },
+            h("div", {}, h("span", {}, "Your answer"), h("b", { class: "mono" }, d.marked || "—")),
+            h("div", {}, h("span", {}, "Correct answer"), h("b", { class: "mono" }, d.key || "—")),
+            h("div", {}, h("span", {}, "Marks"), h("b", {}, `${d.marks > 0 ? "+" : ""}${d.marks}`)),
+            h("div", {}, h("span", {}, "Got it right"), h("b", {}, `${d.right_pct}% of students`)),
+            d.time != null ? h("div", {}, h("span", {}, "Your time"), h("b", {}, fmtT(d.time)), h("span", { class: "small muted" }, `average ${fmtT(d.avg_time)}`)) : null),
+          q && q.solution ? h("details", { open: !isRight(d) }, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : null,
+          h("div", { class: "qv-foot" },
+            h("button", { class: "btn ghost small", type: "button", disabled: cur <= 0, onclick: () => step(-1) }, "‹ Previous"),
+            h("button", { class: "btn ghost small", type: "button", disabled: cur >= list.length - 1, onclick: () => step(1) }, "Next ›")));
+        bodyEl.parentElement.scrollTop = 0;
+      }
+      closeFn = wideModal((b, close) => { bodyEl = b; closeFn = close; draw(); });
+      document.addEventListener("keydown", keys);
+    }
+    const qChip = (d, list) => h("button", { type: "button", class: "qchip " + ((RES[d.result] || [])[1] || ""), onclick: () => openQ(list, list.indexOf(d)) }, `Q${d.q}`);
+
+    // ---- stacked right / partly / wrong / blank bar
+    const LEG = [["ok", "Right"], ["warn", "Partly right"], ["bad", "Wrong"], ["blank", "Not answered"]];
+    const legend = () => h("div", { class: "ra-legend small" }, LEG.map(([c, l]) => h("span", {}, h("i", { class: "sw " + c }), l)));
+    const split = list => ({ ok: list.filter(isRight).length, warn: list.filter(d => d.result === "partial").length, bad: list.filter(d => d.result === "wrong").length, blank: list.filter(d => d.result === "blank").length });
+    const stack = list => { const c = split(list), n = list.length || 1;
+      return h("div", { class: "stackbar", role: "img", "aria-label": `${c.ok} right, ${c.warn} partly right, ${c.bad} wrong, ${c.blank} not answered` },
+        ...LEG.map(([k]) => c[k] ? h("i", { class: k, style: `flex:${c[k] / n}`, title: `${c[k]} ${LEG.find(x => x[0] === k)[1].toLowerCase()}` }) : null).filter(Boolean)); };
+    const marksOf = list => list.reduce((a, d) => a + (d.marks || 0), 0), fullOf = list => list.reduce((a, d) => a + (d.full || 0), 0);
+    function breakdown(title, note, groups) {
+      return h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, title), note ? h("p", { class: "small muted", style: "margin:2px 0 0" }, note) : null), legend()),
+        h("div", { class: "tablebox" }, h("table", { class: "ra-break" }, h("thead", {}, h("tr", {}, ["", "Qs", "Right · Wrong · Blank", "Marks", "Score"].map((x, i) => h("th", { class: i === 1 || i > 2 ? "num" : "" }, x)))),
+          h("tbody", {}, groups.map((g, gi) => { const m = marksOf(g.list), f = fullOf(g.list), sc = f ? Math.round((m / f) * 100) : 0, c = split(g.list);
+            return h("tr", { tabindex: 0, hidden: gi >= 8, onclick: () => openQ(g.list, 0), onkeydown: e => e.key === "Enter" && openQ(g.list, 0) },
+              h("td", {}, h("b", {}, g.name), g.sub ? h("div", { class: "small muted" }, g.sub) : null), h("td", { class: "num" }, g.list.length),
+              h("td", { style: "min-width:160px" }, stack(g.list), h("div", { class: "small muted" }, `${c.ok + c.warn} · ${c.bad} · ${c.blank}`)),
+              h("td", { class: "num" }, `${m} / ${f}`), h("td", { class: "num" }, h("b", { class: sc < 35 ? "t-bad" : sc >= 70 ? "t-ok" : "" }, `${sc}%`))); })))),
+        groups.length > 8 ? h("button", { class: "link", type: "button", onclick: e => { e.target.closest(".card").querySelectorAll("tr[hidden]").forEach(r => (r.hidden = false)); e.target.remove(); } }, `Show all ${groups.length}`) : null);
+    }
+
+    // ---- where the marks went
+    const easyMiss = D.filter(d => missed(d) && d.right_pct >= 60);
+    const neg = D.filter(d => d.marks < 0), negSum = -marksOf(neg);
+    const tough = D.filter(d => missed(d) && d.right_pct < 30);
+    const gain = easyMiss.reduce((a, d) => a + (d.full - d.marks), 0);
+    const attempted = D.filter(d => ["correct", "wrong", "partial", "bonus"].includes(d.result));
+    const accuracy = attempted.length ? Math.round((attempted.filter(isRight).length / attempted.length) * 100) : 0;
+    const insight = h("div", { class: "card" }, h("h2", {}, "Where your marks went"),
+      h("div", { class: "stats" },
+        h("div", { class: "stat" }, h("b", {}, `${accuracy}%`), h("span", {}, `Accuracy · ${attempted.filter(isRight).length} right of ${attempted.length} attempted`)),
+        h("div", { class: "stat warn" }, h("b", {}, `−${negSum}`), h("span", {}, `Lost to negative marking (${neg.length} wrong)`)),
+        h("div", { class: "stat gold" }, h("b", {}, `${rep.total + gain}`), h("span", {}, `Your score if you had got the ${easyMiss.length} easier ones right`))),
+      easyMiss.length ? h("div", { class: "ra-group" }, h("p", {}, h("b", {}, "Missed but most students got right"), h("span", { class: "small muted" }, " — 60% or more of students got these. Revise these first.")), h("div", { class: "qchips" }, easyMiss.map(d => qChip(d, easyMiss)))) : null,
+      tough.length ? h("div", { class: "ra-group" }, h("p", {}, h("b", {}, "Tough questions"), h("span", { class: "small muted" }, " — fewer than 30% of students got these. Don't worry too much about them.")), h("div", { class: "qchips" }, tough.map(d => qChip(d, tough)))) : null);
+
+    // ---- chapter and difficulty breakdowns
+    const groupBy = (keyFn, subFn) => { const m = new Map(); for (const d of D) { const k = keyFn(d); if (!k) continue; if (!m.has(k)) m.set(k, { name: k.split("|").pop(), sub: subFn ? subFn(d) : "", list: [] }); m.get(k).list.push(d); } return [...m.values()]; };
+    const chapters = groupBy(d => ch(d) && `${d.subject}|${ch(d)}`, d => cap(d.subject))
+      .sort((a, b) => marksOf(a.list) / (fullOf(a.list) || 1) - marksOf(b.list) / (fullOf(b.list) || 1));
+    const levels = groupBy(lv).sort((a, b) => QLEVELS.indexOf(a.name) - QLEVELS.indexOf(b.name));
+
+    // ---- time analysis (online tests)
+    let timeCard = null;
+    if (hasTime) {
+      const used = Math.max(Math.round((rep.attempt.submitted_at - rep.attempt.started_at) / 1000), D.reduce((a, d) => a + (d.time || 0), 0));
+      const tsum = list => list.reduce((a, d) => a + (d.time || 0), 0);
+      const slow = D.filter(d => !isRight(d) && d.time > 120 && d.time > 1.5 * (d.avg_time || 0)).sort((a, b) => b.time - a.time).slice(0, 12);
+      const W = 900, H = 200, L = 40, R = 8, T = 10, B = 26, n = D.length, bw = (W - L - R) / n;
+      const maxT = Math.max(60, ...D.map(d => Math.max(d.time || 0, d.avg_time || 0)));
+      const step = maxT > 600 ? 300 : maxT > 240 ? 120 : 60, top = Math.ceil(maxT / step) * step;
+      const y = v => T + (H - T - B) * (1 - v / top);
+      const NS = "http://www.w3.org/2000/svg", s = (tag, a, txt) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; };
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, class: "ra-time", role: "img", "aria-label": "Time you spent on each question, coloured by result" });
+      for (let v = 0; v <= top; v += step) svg.append(s("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }), s("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end", class: "axis" }, `${v / 60}m`));
+      const tip = h("div", { class: "ra-tip", hidden: true });
+      D.forEach((d, i) => {
+        const x = L + i * bw, tone = { correct: "ok", bonus: "ok", partial: "warn", wrong: "bad" }[d.result] || "blank";
+        if (i > 0 && D[i - 1].subject !== d.subject) svg.append(s("line", { x1: x, x2: x, y1: T, y2: H - B, class: "divider" }), s("text", { x: x + 4, y: T + 10, class: "axis" }, cap(d.subject)));
+        if (i === 0) svg.append(s("text", { x: x + 4, y: T + 10, class: "axis" }, cap(d.subject)));
+        const hgt = Math.max(1.5, (H - T - B) - (y(d.time || 0) - T));
+        svg.append(s("rect", { x: x + bw * 0.15, width: Math.max(1, bw * 0.7), y: H - B - hgt, height: hgt, rx: Math.min(2, bw * 0.3), class: "b " + tone }));
+        if (d.avg_time) svg.append(s("line", { x1: x + bw * 0.05, x2: x + bw * 0.95, y1: y(d.avg_time), y2: y(d.avg_time), class: "avg" }));
+        if (i % 5 === 0 || n <= 30) svg.append(s("text", { x: x + bw / 2, y: H - 8, "text-anchor": "middle", class: "axis" }, d.q));
+        const hit = s("rect", { x, width: bw, y: T, height: H - T - B, class: "hit" });
+        hit.addEventListener("mouseenter", () => { tip.hidden = false; show(tip, h("b", {}, `Q${d.q} · ${(RES[d.result] || [d.result])[0]}`), h("div", {}, `Your time ${fmtT(d.time)}`), h("div", { class: "muted" }, `Average ${fmtT(d.avg_time)}`));
+          const r = svg.getBoundingClientRect(), px = ((x + bw / 2) / W) * r.width; tip.style.left = `${Math.min(Math.max(px, 70), r.width - 70)}px`; });
+        hit.addEventListener("mouseleave", () => (tip.hidden = true));
+        hit.addEventListener("click", () => openQ(D, i));
+        svg.append(hit);
+      });
+      const bySub = rep.subjects.map(k => { const l = D.filter(d => d.subject === k), at = l.filter(d => d.result !== "blank");
+        return h("tr", {}, h("td", {}, h("b", {}, cap(k))), h("td", { class: "num" }, fmtT(tsum(l))), h("td", { class: "num" }, at.length), h("td", { class: "num" }, at.length ? fmtT(Math.round(tsum(l) / at.length)) : "—"), h("td", { class: "num" }, fmtT(tsum(l.filter(isRight)))), h("td", { class: "num" }, fmtT(tsum(l.filter(d => d.result === "wrong"))))); });
+      timeCard = h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Time analysis"), h("p", { class: "small muted", style: "margin:2px 0 0" }, `Started ${when(rep.attempt.started_at)} · submitted ${when(rep.attempt.submitted_at)}`)),
+          h("div", { class: "ra-legend small" }, LEG.map(([c, l]) => h("span", {}, h("i", { class: "sw " + c }), l)), h("span", {}, h("i", { class: "sw avgline" }), "Average of all students"))),
+        h("div", { class: "stats" },
+          h("div", { class: "stat" }, h("b", {}, fmtT(used)), h("span", {}, `Time used${rep.attempt.duration ? ` of ${rep.attempt.duration} min` : ""}`)),
+          h("div", { class: "stat ok" }, h("b", {}, fmtT(tsum(D.filter(isRight)))), h("span", {}, "On right answers")),
+          h("div", { class: "stat warn" }, h("b", {}, fmtT(tsum(D.filter(d => d.result === "wrong")))), h("span", {}, "On wrong answers")),
+          h("div", { class: "stat" }, h("b", {}, fmtT(tsum(D.filter(d => d.result === "blank")))), h("span", {}, "On questions left blank"))),
+        h("div", { class: "ra-chart" }, svg, tip),
+        h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Subject", "Time", "Attempted", "Per attempt", "On right", "On wrong"].map((x, i) => h("th", { class: i ? "num" : "" }, x)))), h("tbody", {}, bySub))),
+        slow.length ? h("div", { class: "ra-group" }, h("p", {}, h("b", {}, "Too long, still not right"), h("span", { class: "small muted" }, " — over 2 minutes and much longer than average. Next time, move on sooner.")), h("div", { class: "qchips" }, slow.map(d => qChip(d, slow)))) : null);
+    }
+
+    // ---- micro analysis: every question
+    const sel = (id, label, opts) => h("select", { id, "aria-label": label }, h("option", { value: "" }, label), opts.map(([v, t]) => h("option", { value: v }, t)));
+    const fRes = sel("ra-res", "All results", [["right", "Right"], ["wrong", "Wrong"], ["blank", "Not answered"], ["partial", "Partly right"]]);
+    const fSub = rep.subjects.length > 1 ? sel("ra-sub", "All subjects", rep.subjects.map(k => [k, cap(k)])) : null;
+    const chs = [...new Set(D.map(ch).filter(Boolean))].sort();
+    const fCh = chs.length ? sel("ra-ch", "All chapters", chs.map(c => [c, c])) : null;
+    const lvs = QLEVELS.filter(l => D.some(d => lv(d) === l));
+    const fLv = lvs.length ? sel("ra-lv", "All levels", lvs.map(l => [l, l])) : null;
+    const tb = h("tbody"), count = h("span", { class: "small muted" });
+    const drawTable = () => {
+      const list = D.filter(d => (!fRes.value || (fRes.value === "right" ? isRight(d) : d.result === fRes.value)) && (!fSub || !fSub.value || d.subject === fSub.value)
+        && (!fCh || !fCh.value || ch(d) === fCh.value) && (!fLv || !fLv.value || lv(d) === fLv.value));
+      count.textContent = `${list.length} question${list.length === 1 ? "" : "s"} · tap one to see it with the solution`;
+      tb.replaceChildren(...list.map((d, i) => { const [label, tone] = RES[d.result] || [d.result, ""], q = d.question;
+        return h("tr", { tabindex: 0, class: "ra-row " + tone, onclick: () => openQ(list, i), onkeydown: e => e.key === "Enter" && openQ(list, i) },
+          h("td", {}, h("span", { class: "qdot " + tone }, d.q)), h("td", {}, cap(d.subject)),
+          h("td", { class: "ra-topic" }, q && q.chapter ? h("b", {}, q.chapter) : h("span", { class: "muted" }, "—"), q && q.topic ? h("div", { class: "small muted" }, q.topic) : null),
+          h("td", {}, q && q.level ? h("span", { class: "pill lv" + (QLEVELS.indexOf(q.level) + 1) }, q.level) : "—"),
+          h("td", { class: "mono" }, `${d.marked || "–"} / ${d.key || "–"}`), h("td", {}, h("span", { class: "pill " + tone }, label)),
+          h("td", { class: "num" }, `${d.marks > 0 ? "+" : ""}${d.marks}`), hasTime ? h("td", { class: "num" }, fmtT(d.time)) : null, h("td", { class: "num" }, `${d.right_pct}%`)); }));
     };
-    filter.onchange = draw;
+    [fRes, fSub, fCh, fLv].filter(Boolean).forEach(f => (f.onchange = drawTable));
+
     show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, rep.test.name), h("p", { class: "sub" }, `${rep.test.code} · ${fmtDate(rep.test.test_date)} · ${rep.test.sheet_title}`))),
       h("div", { class: "stats" }, h("div", { class: "stat gold" }, h("b", {}, `${rep.total} / ${rep.max}`), h("span", {}, `${pct}% of full marks`)),
         h("div", { class: "stat" }, h("b", {}, `${rep.rank_batch} / ${rep.rank_batch_of}`), h("span", {}, "Rank in batch")),
@@ -1588,19 +1717,24 @@
         h("div", { class: "stat ok" }, h("b", {}, rep.correct), h("span", {}, "Right")), h("div", { class: "stat warn" }, h("b", {}, rep.wrong), h("span", {}, "Wrong")), h("div", { class: "stat" }, h("b", {}, rep.blank), h("span", {}, "Not answered"))),
       h("div", { class: "card" }, h("h2", {}, "Subject-wise"), h("div", { class: "bars" }, rep.subjects.map(s => {
         const got = rep.by_subject[s] || 0, out = rep.subject_max[s] || 1;
-        return h("div", { class: "barrow", style: "grid-template-columns:110px minmax(0,1fr) 80px" }, h("span", {}, s[0] + s.slice(1).toLowerCase()),
+        return h("div", { class: "barrow", style: "grid-template-columns:110px minmax(0,1fr) 80px" }, h("span", {}, cap(s)),
           h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(100, (got / out) * 100))}%` })), h("span", { class: "num" }, `${got} / ${out}`));
       })),
         rep.subject_detail ? h("div", { class: "tablebox", style: "margin-top:12px" }, h("table", {},
           h("thead", {}, h("tr", {}, ["Subject", "Marks", "Right", "Wrong", "Blank", "Accuracy", "Batch avg", "Institute avg", "Highest", "Rank in batch", "Overall rank"].map(x => h("th", {}, x)))),
-          h("tbody", {}, rep.subject_detail.map(d => h("tr", {}, h("td", {}, h("b", {}, d.subject[0] + d.subject.slice(1).toLowerCase())),
+          h("tbody", {}, rep.subject_detail.map(d => h("tr", {}, h("td", {}, h("b", {}, cap(d.subject))),
             h("td", { class: "num" }, h("b", {}, `${d.marks} / ${rep.subject_max[d.subject] || 0}`)), h("td", { class: "num" }, d.right + (d.partial ? ` (+${d.partial} part)` : "")), h("td", { class: "num" }, d.wrong), h("td", { class: "num" }, d.blank),
             h("td", { class: "num" }, d.accuracy == null ? "—" : `${d.accuracy}%`), h("td", { class: "num" }, d.batch_avg), h("td", { class: "num" }, d.all_avg), h("td", { class: "num" }, d.top),
             h("td", { class: "num" }, `${d.rank_batch.rank} / ${d.rank_batch.of}`), h("td", { class: "num" }, `${d.rank_all.rank} / ${d.rank_all.of}`))),
             rep.subject_detail.length > 1 ? h("tr", { class: "totalrow" }, h("td", {}, h("b", {}, "Total")), h("td", { class: "num" }, h("b", {}, `${rep.total} / ${rep.max}`)), h("td", { class: "num" }, rep.correct), h("td", { class: "num" }, rep.wrong), h("td", { class: "num" }, rep.blank),
               h("td", {}, ""), h("td", { class: "num" }, rep.batch_avg), h("td", { class: "num" }, rep.all_avg), h("td", { class: "num" }, rep.top_total), h("td", { class: "num" }, `${rep.rank_batch} / ${rep.rank_batch_of}`), h("td", { class: "num" }, `${rep.rank_all} / ${rep.rank_all_of}`)) : null))) : null),
-      h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Question-wise"), filter), h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Q", "Subject", "Marked", "Correct", "Result", "Marks"].map(x => h("th", {}, x)))), tb)), qbox));
-    draw();
+      insight,
+      timeCard,
+      chapters.length ? breakdown("Chapter-wise", "Weakest chapters first. Tap a chapter to go through its questions.", chapters) : null,
+      levels.length ? breakdown("By difficulty", "", levels) : null,
+      h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Micro analysis"), count), h("div", { class: "row ra-filters" }, [fRes, fSub, fCh, fLv].filter(Boolean))),
+        h("div", { class: "tablebox" }, h("table", { class: "ra-micro" }, h("thead", {}, h("tr", {}, ["Q", "Subject", "Chapter · topic", "Level", "Yours / key", "Result", "Marks", hasTime ? "Time" : null, "Class right"].filter(Boolean).map(x => h("th", {}, x)))), tb))));
+    drawTable();
   }
   route(/^\/report\/(\d+)\/(\d+)$/, async (view, tid, sid) => {
     await structure();
@@ -1615,14 +1749,29 @@
       installHint(),
       await onlineTestsCard(),
       tests.length ? progressView(tests) : null,
-      h("div", { class: "card" }, h("h2", {}, "My results"), tests.length ? h("div", { class: "results-list" }, tests.map(t => {
-        const pct = t.max ? Math.round(t.total / t.max * 100) : 0;
-        return h("a", { class: "result-row", href: `#/my/${t.id}` },
-          h("div", { class: "rr-main" }, h("b", {}, t.name), h("span", { class: "small muted" }, `${fmtDate(t.test_date)} · Rank ${t.rank_batch} of ${t.rank_batch_of} in batch`)),
-          h("div", { class: "rr-score" }, h("b", {}, `${t.total}`), h("span", { class: "small muted" }, `/ ${t.max} · ${pct}%`)),
-          h("span", { class: "rr-go", "aria-hidden": "true" }, "›"));
-      })) : h("p", { class: "empty" }, "No results yet. Your marks appear here once your institute publishes them.")));
+      h("h2", { class: "tc-title" }, "My tests"),
+      tests.length ? h("div", { class: "tcards" }, tests.map(testCard)) : h("div", { class: "card" }, h("p", { class: "empty" }, "No results yet. Your marks appear here once your institute publishes them.")));
   }, ["student"]);
+
+  // one result card per test: name, size, timing, total and subject scores, Analytics button
+  function testCard(t) {
+    const cap = x => x[0] + x.slice(1).toLowerCase();
+    const when = ms => new Date(ms).toLocaleString("en-IN", { hour: "numeric", minute: "2-digit", day: "numeric", month: "short", year: "numeric" });
+    const pct = t.max ? Math.round((t.total / t.max) * 100) : 0;
+    const subs = (t.subjects || Object.keys(t.by_subject || {}));
+    return h("article", { class: "tcard" },
+      h("header", {}, h("b", {}, t.name), h("span", { class: "tc-code" }, t.code)),
+      h("div", { class: "tc-body" },
+        h("div", { class: "tc-chips" }, h("span", { class: "tc-chip q" }, `${t.questions} Questions`), t.duration ? h("span", { class: "tc-chip m" }, `${t.duration} Mins`) : null, h("span", { class: "tc-chip k" }, `${t.max} Marks`)),
+        h("dl", { class: "tc-when" }, ...(t.attempt ? [h("dt", {}, "Started at"), h("dd", {}, when(t.attempt.started_at)), h("dt", {}, "Submitted at"), h("dd", {}, when(t.attempt.submitted_at))]
+          : [h("dt", {}, "Test date"), h("dd", {}, fmtDate(t.test_date)), h("dt", {}, "Written on"), h("dd", {}, "OMR sheet")])),
+        h("div", { class: "tc-scores" }, h("div", { class: "tc-total" }, h("span", {}, "Total"), h("b", {}, `${t.total} / ${t.max}`), h("span", { class: "muted" }, `${pct}%`)),
+          subs.length > 1 ? h("div", { class: "tc-subs" }, subs.map(k => { const got = (t.by_subject || {})[k] || 0, out = (t.subject_max || {})[k] || 0;
+            return h("div", {}, h("span", {}, cap(k)), h("div", { class: "meter" }, h("i", { style: `width:${out ? Math.max(0, Math.min(100, (got / out) * 100)) : 0}%` })), h("b", {}, `${got} / ${out}`)); })) : null),
+        h("div", { class: "tc-ranks small" }, h("span", {}, "Batch rank ", h("b", {}, `${t.rank_batch}/${t.rank_batch_of}`)), h("span", {}, "Overall ", h("b", {}, `${t.rank_all}/${t.rank_all_of}`)),
+          h("span", {}, h("b", { class: "t-ok" }, t.correct), " right · ", h("b", { class: "t-bad" }, t.wrong), " wrong")),
+        h("a", { class: "btn tc-go", href: `#/my/${t.id}` }, "Analytics ›")));
+  }
 
   async function onlineTestsCard() {
     let r; try { r = await GET("/api/my/cbt"); } catch (e) { return null; }

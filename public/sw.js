@@ -1,6 +1,6 @@
 /* Test Portal app worker: keeps the app's screens on the phone so it opens fast,
    and always fetches marks and results fresh from the server (never stored). */
-const VERSION = "tp-2026-11-28-1";
+const VERSION = "tp-2026-11-28-2";
 const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/vendor/omr_core.js", "/vendor/sheet_render.js",
   "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png"];
 

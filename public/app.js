@@ -241,33 +241,46 @@
     if (online && t.closes_at && now > t.closes_at) return ["over", "Window closed"];
     return null;
   }
+  const ICON = {
+    results: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    analysis: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    print: '<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    sheet: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.5 5.2"/>',
+  };
+  const icon = k => { const sp = document.createElement("span"); sp.className = "ic"; sp.setAttribute("aria-hidden", "true");
+    sp.innerHTML = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`; return sp; };
   function examCard(t) {
     const online = t.mode && t.mode !== "omr";
-    const kind = t.mode === "cbt" ? "Online" : t.mode === "both" ? "Online + OMR" : "OMR exam";
+    const kind = t.mode === "cbt" ? "Online" : t.mode === "both" ? "Online + OMR" : "OMR";
     const st = testStatus(t);
     const open = () => (location.hash = `#/tests/${t.id}`);
-    const cell = (label, ...val) => h("div", {}, h("dt", {}, label), h("dd", {}, ...val));
-    const names = t.batch_ids.map(id => { const b = batchOf(id); return b ? `${campusName(b.campus_id)} ${b.name}` : ""; }).filter(Boolean);
-    const quick = (label, tab) => h("a", { class: "ec-q", href: `#/tests/${t.id}/${tab}`, onclick: e => e.stopPropagation() }, label);
-    const qs = t.linked_count ? `${t.linked_count} / ${t.questions}` : t.questions;
-    return h("article", { class: "ec " + (online ? "ec-on" : "ec-omr"), tabindex: 0, role: "link", "aria-label": `Open ${t.name}`,
+    const when = online && t.opens_at ? new Date(t.opens_at) : t.test_date ? new Date(t.test_date + "T00:00:00") : null;
+    const ok = when && !isNaN(when);
+    const names = t.batch_ids.map(id => { const b = batchOf(id); return b ? `${campusName(b.campus_id)} · ${b.name}` : ""; }).filter(Boolean);
+    const done = online ? (t.attempt_count || 0) : t.result_count, of = t.student_count || 0;
+    const pct = of ? Math.min(100, Math.round((done / of) * 100)) : 0;
+    const act = (k, label, href) => h("a", { class: "ec-a", href, onclick: e => e.stopPropagation() }, icon(k), h("span", {}, label));
+    const hm = ms => new Date(ms).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
+    return h("article", { class: "ec " + (online ? "ec-on" : "ec-omr") + (st ? " st-" + st[0] : ""), tabindex: 0, role: "link", "aria-label": `Open ${t.name}`,
       onclick: open, onkeydown: e => { if (e.key === "Enter" && e.target === e.currentTarget) open(); } },
-      h("header", {}, h("b", { class: "ec-title", title: t.name }, t.name), h("span", { class: "ec-code mono" }, t.code)),
-      h("div", { class: "ec-tags" }, h("span", { class: "ec-kind" }, kind), st ? h("span", { class: "ec-st " + st[0] }, st[1]) : null,
-        h("span", { class: "ec-pub " + (t.published ? "ok" : "") }, t.published ? "Published" : "Not published")),
-      online && t.opens_at ? h("div", { class: "ec-time" },
-        h("div", {}, h("span", {}, "From"), h("b", {}, tWhen(t.opens_at)[0]), h("small", {}, tWhen(t.opens_at)[1])),
-        h("i", { "aria-hidden": "true" }, "→"),
-        h("div", {}, h("span", {}, "To"), t.closes_at ? [h("b", {}, tWhen(t.closes_at)[0]), h("small", {}, tWhen(t.closes_at)[1])] : h("b", {}, "Open"))) : null,
-      h("dl", { class: "ec-grid" },
-        online ? null : cell("Date", t.test_date ? fmtDate(t.test_date) : "—"),
-        cell("Questions", qs),
-        online ? cell("Duration", `${t.duration} min`) : cell("Template", t.sheet_title.replace(/\s*\(.*\)$/, "")),
-        online ? cell("Attempts", h("b", {}, t.attempt_count || 0)) : null,
-        cell("OMRs read", h("b", {}, `${t.result_count}`), h("small", {}, ` / ${t.student_count}`))),
-      names.length ? h("div", { class: "ec-batches", title: names.join(", ") }, names.slice(0, 2).map(n => h("span", {}, n)), names.length > 2 ? h("span", { class: "more" }, `+${names.length - 2}`) : null) : null,
-      h("footer", {}, quick("Results", "results"), quick("Analysis", "analysis"),
-        h("a", { class: "ec-q", href: `#/print/${t.id}`, onclick: e => e.stopPropagation() }, "Print"), h("span", { class: "ec-go", "aria-hidden": "true" }, "›")));
+      h("div", { class: "ec-top" },
+        h("div", { class: "ec-date" + (ok ? "" : " none") }, ok ? [h("small", {}, when.toLocaleDateString("en-IN", { month: "short" }).toUpperCase()),
+          h("b", {}, when.getDate()), h("small", {}, when.toLocaleDateString("en-IN", { weekday: "short" }))] : h("b", {}, "—")),
+        h("div", { class: "ec-head" },
+          h("div", { class: "ec-badges" }, h("span", { class: "ec-kind" }, kind), st ? h("span", { class: "ec-st " + st[0] }, st[1]) : null,
+            h("span", { class: "ec-pub " + (t.published ? "ok" : "") }, t.published ? "✓ Published" : "Draft")),
+          h("b", { class: "ec-title", title: t.name }, t.name),
+          h("span", { class: "ec-sub" }, h("span", { class: "mono" }, t.code), ` · ${t.linked_count ? `${t.linked_count}/` : ""}${t.questions} Qs`))),
+      h("div", { class: "ec-facts" },
+        online ? h("span", {}, icon("clock"), t.opens_at ? `${hm(t.opens_at)}${t.closes_at ? " – " + hm(t.closes_at) : ""}` : "No window set", h("em", {}, ` · ${t.duration} min`))
+          : h("span", {}, icon("sheet"), t.sheet_title.replace(/\s*\(.*\)$/, "")),
+        names.length ? h("span", { title: names.join("\n") }, icon("users"), names.length === 1 ? names[0] : `${names.length} batches`) : null),
+      h("div", { class: "ec-prog" }, h("div", { class: "ec-prog-l" }, h("span", {}, online ? "Attempted" : "OMRs read"), h("b", {}, `${done}`, h("small", {}, ` / ${of}`))),
+        h("div", { class: "ec-bar-t" }, h("i", { style: `width:${pct}%` }))),
+      h("div", { class: "ec-foot" },
+        h("span", { class: "ec-acts" }, act("results", "Results", `#/tests/${t.id}/results`), act("analysis", "Analysis", `#/tests/${t.id}/analysis`), act("print", "Print", `#/print/${t.id}`))));
   }
   function testsTable(tests) {
     if (!tests.length) return h("p", { class: "empty" }, state.me.role === "central" ? "No tests yet. Create one with New test." : "No tests for your campuses yet.");

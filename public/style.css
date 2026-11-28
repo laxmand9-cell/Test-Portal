@@ -401,7 +401,7 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .tc-when dt { color: var(--muted) } .tc-when dd { margin: 0; text-align: right; font-weight: 600 }
 .tc-scores { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px }
 .tc-total { display: flex; align-items: baseline; gap: 8px } .tc-total b { font-size: 22px } .tc-total span:first-child { color: var(--muted); font-size: 13px; margin-right: auto }
-.tc-subs { display: grid; gap: 6px } .tc-subs > div { display: grid; grid-template-columns: 92px minmax(0, 1fr) 64px; gap: 8px; align-items: center; font-size: 13.5px } .tc-subs b { text-align: right; font-variant-numeric: tabular-nums }
+.tc-subs { display: grid; gap: 6px } .tc-subs > div { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 13.5px } .tc-subs b { text-align: right; font-variant-numeric: tabular-nums }
 .tc-ranks { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted) } .tc-ranks b { color: var(--fg) }
 .tc-go { justify-self: center; padding: 9px 26px; border-radius: 999px }
 .t-ok { color: var(--ok) !important } .t-bad { color: var(--bad) !important }
@@ -567,3 +567,9 @@ body.exam-mode *, body.exam-mode *::before, body.exam-mode *::after { animation:
 .try-fb { font-weight: 600 } .try-fb:empty { display: none }
 .try-fb.ok { color: var(--ok) } .try-fb.bad { color: var(--bad) }
 @media print { .ec footer, .ec-bar, .try-row .link { display: none } }
+
+/* student: subject marks in each test */
+.sm-table td, .sm-table th { white-space: nowrap }
+.sm-table tbody tr { cursor: pointer } .sm-table tbody tr:hover { background: var(--gold-soft) }
+.sm-bar { height: 4px; background: var(--sunk); border-radius: 2px; margin-top: 3px; min-width: 56px; overflow: hidden }
+.sm-bar i { display: block; height: 100%; background: var(--ok) }

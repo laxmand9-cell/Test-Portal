@@ -1929,7 +1929,7 @@
         h("dl", { class: "tc-when" }, ...(t.attempt ? [h("dt", {}, "Started at"), h("dd", {}, when(t.attempt.started_at)), h("dt", {}, "Submitted at"), h("dd", {}, when(t.attempt.submitted_at))]
           : [h("dt", {}, "Test date"), h("dd", {}, fmtDate(t.test_date)), h("dt", {}, "Written on"), h("dd", {}, "OMR sheet")])),
         h("div", { class: "tc-scores" }, h("div", { class: "tc-total" }, h("span", {}, "Total"), h("b", {}, `${t.total} / ${t.max}`), h("span", { class: "muted" }, `${pct}%`)),
-          subs.length > 1 ? h("div", { class: "tc-subs" }, subs.map(k => { const got = (t.by_subject || {})[k] || 0, out = (t.subject_max || {})[k] || 0;
+          subs.length ? h("div", { class: "tc-subs" }, subs.map(k => { const got = (t.by_subject || {})[k] || 0, out = (t.subject_max || {})[k] || 0;
             return h("div", {}, h("span", {}, cap(k)), h("div", { class: "meter" }, h("i", { style: `width:${out ? Math.max(0, Math.min(100, (got / out) * 100)) : 0}%` })), h("b", {}, `${got} / ${out}`)); })) : null),
         h("div", { class: "tc-ranks small" }, h("span", {}, "Batch rank ", h("b", {}, `${t.rank_batch}/${t.rank_batch_of}`)), h("span", {}, "Overall ", h("b", {}, `${t.rank_all}/${t.rank_all_of}`)),
           h("span", {}, h("b", { class: "t-ok" }, t.correct), " right · ", h("b", { class: "t-bad" }, t.wrong), " wrong")),
@@ -2004,7 +2004,26 @@
         h("div", { class: "barrow", style: "grid-template-columns:96px minmax(0,1fr) 44px" }, h("span", {}, title(r.k)),
           h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(100, r.v))}%` + (weakest && r.k === weakest.k ? ";background:var(--warn)" : "") })),
           h("span", { class: "num" }, `${r.v}%`))))) : null,
-      weakest ? h("p", { class: "small", style: "margin:0" }, "Focus area: ", h("b", {}, title(weakest.k)), ". Open a test and choose \"Wrong only\" to review those questions.") : null);
+      weakest ? h("p", { class: "small", style: "margin:0" }, "Focus area: ", h("b", {}, title(weakest.k)), ". Open a test and choose \"Wrong only\" to review those questions.") : null,
+      subjectMarksTable(tests));
+  }
+  // every test as a row, each subject's marks as a column (newest first); tap a row to open the test
+  function subjectMarksTable(tests) {
+    const order = ["PHYSICS", "CHEMISTRY", "MATHEMATICS", "BIOLOGY", "BOTANY", "ZOOLOGY"];
+    const keys = [...new Set(tests.flatMap(t => t.subjects || Object.keys(t.by_subject || {})))]
+      .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
+    if (!keys.length) return null;
+    const cap = k => k[0] + k.slice(1).toLowerCase();
+    const open = t => (location.hash = `#/my/${t.id}`);
+    const cell = (got, out) => out ? h("td", { class: "num" }, h("b", { class: got < 0 ? "t-bad" : "" }, got), h("span", { class: "muted small" }, ` / ${out}`),
+      h("div", { class: "sm-bar" }, h("i", { style: `width:${Math.max(0, Math.min(100, (got / out) * 100))}%` }))) : h("td", { class: "num muted" }, "—");
+    return h("div", { style: "display:grid;gap:6px" }, h("h3", {}, "Subject marks in each test"),
+      h("div", { class: "tablebox" }, h("table", { class: "sm-table" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Test"), ...keys.map(k => h("th", { class: "num" }, cap(k))), h("th", { class: "num" }, "Total"), h("th", { class: "num" }, "Batch rank"))),
+        h("tbody", {}, tests.map(t => h("tr", { tabindex: 0, onclick: () => open(t), onkeydown: e => e.key === "Enter" && open(t) },
+          h("td", {}, h("b", {}, t.name), h("div", { class: "small muted" }, `${t.code} · ${fmtDate(t.test_date)}`)),
+          ...keys.map(k => cell((t.by_subject || {})[k] ?? 0, (t.subject_max || {})[k] || 0)),
+          cell(t.total, t.max), h("td", { class: "num" }, `${t.rank_batch} / ${t.rank_batch_of}`)))))));
   }
   route(/^\/my\/(\d+)$/, async (view, id) => reportView(view, await GET(`/api/my/tests/${id}`), h("a", { href: "#/my" }, "‹ My results")), ["student"]);
 

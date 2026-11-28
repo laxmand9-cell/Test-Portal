@@ -710,12 +710,12 @@
           !isNew ? h("button", { class: "btn danger", type: "button", onclick: () => confirmBox("Delete this test and all its results?", "Delete", async () => { await DEL(`/api/tests/${id}`); location.hash = "#/tests"; }) }, "Delete test") : null)));
   }, ["central"]);
 
-  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions))?$/, async (view, id, tab = "results") => {
+  route(/^\/tests\/(\d+)(?:\/(key|sheets|scans|results|questions|toppers))?$/, async (view, id, tab = "results") => {
     await structure();
     const t = await GET(`/api/tests/${id}`);
     const layout = O.getLayout(t.sheet);
     const central = state.me.role === "central";
-    const tabs = [["results", "Results"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
+    const tabs = [["results", "Results"], ["toppers", "Toppers"], ["sheets", "Print sheets"], ["scans", "Upload scans"], ...(central ? [["questions", "Questions"], ["key", "Answer key"]] : [])];
     const body = h("div", { style: "display:grid;gap:16px" });
     show(view, 
       h("div", { class: "head" }, h("div", {}, h("a", { href: "#/tests" }, "‹ Tests"), h("h1", {}, `${t.name}`),
@@ -726,6 +726,7 @@
           central ? h("a", { class: "btn ghost small", href: `#/tests/${id}/edit` }, "Edit") : null)),
       h("div", { class: "tabs" }, tabs.map(([k, v]) => h("a", { href: `#/tests/${id}/${k}`, class: k === tab ? "on" : "" }, v))), body);
     if (tab === "key" && central) return keyTab(body, t, layout);
+    if (tab === "toppers") return toppersTab(body, t);
     if (tab === "questions" && central) return questionsTab(body, t, layout);
     if (tab === "sheets") return sheetsTab(body, t, layout);
     if (tab === "scans") return scansTab(body, t, layout);
@@ -1042,6 +1043,97 @@
     show(view, pageStyle, bar, out);
     draw();
   }, ["central", "zone", "campus"]);
+
+
+  // ---- toppers: institute / zone / campus rank lists, best zone & campus, presence in top N
+  async function toppersTab(body, t) {
+    const R = await GET(`/api/tests/${t.id}/toppers`);
+    if (!R.students.length) { body.append(h("div", { class: "card" }, h("p", { class: "empty" }, "No marks yet. Toppers appear once sheets are read or online tests are submitted."))); return; }
+    const role = state.me.role;
+    const subj = R.subjects.length > 1 ? R.subjects : [];
+    const nice = s => s.charAt(0) + s.slice(1).toLowerCase();
+    let topN = 20, within = role === "central" ? "institute" : role === "zone" ? "zone" : "campus";
+    const minN = 5; // groups smaller than this are not called "best"
+    const bestBy = list => list.filter(x => x.n >= minN).sort((a, b) => b.avg_pct - a.avg_pct)[0] || list.slice().sort((a, b) => b.avg_pct - a.avg_pct)[0];
+    const mostIn = (list, c) => list.slice().sort((a, b) => (b.top[c] || 0) - (a.top[c] || 0) || b.avg_pct - a.avg_pct)[0];
+    const bz = R.zones.length ? bestBy(R.zones) : null, bc = R.campuses.length ? bestBy(R.campuses) : null, mc = R.campuses.length ? mostIn(R.campuses, 100) : null;
+    const tiles = h("div", { class: "stats" },
+      h("div", { class: "stat gold" }, h("b", {}, R.students[0].name || R.students[0].roll), h("span", {}, `Rank 1 · ${R.students[0].total}/${R.max} · ${R.students[0].campus}`)),
+      h("div", { class: "stat" }, h("b", {}, R.appeared), h("span", {}, "Students ranked in this test")),
+      bz ? h("div", { class: "stat ok" }, h("b", { style: "font-size:20px" }, bz.name), h("span", {}, `Top zone · average ${bz.avg_pct}%`)) : null,
+      bc ? h("div", { class: "stat ok" }, h("b", { style: "font-size:20px" }, bc.name), h("span", {}, `Top campus · average ${bc.avg_pct}%`)) : null,
+      mc && (mc.top[100] || 0) ? h("div", { class: "stat" }, h("b", { style: "font-size:20px" }, mc.name), h("span", {}, `Most students in top 100 (${mc.top[100]})`)) : null);
+    // presence tables
+    const presence = (title, list, isCampus) => {
+      let sortKey = 100;
+      const tb = h("tbody");
+      const draw = () => {
+        const rows = list.slice().sort((a, b) => sortKey === "avg" ? b.avg_pct - a.avg_pct : (b.top[sortKey] || 0) - (a.top[sortKey] || 0) || b.avg_pct - a.avg_pct);
+        show(tb, rows.map((x, i) => h("tr", {}, h("td", { class: "num" }, i + 1), h("td", {}, h("b", {}, x.name), isCampus && x.zone ? h("div", { class: "small muted" }, x.zone) : null),
+          h("td", { class: "num" }, x.n), ...R.cuts.map(c => h("td", { class: "num" }, x.top[c] ? h("b", {}, x.top[c]) : h("span", { class: "muted" }, "0"))),
+          h("td", { class: "num" }, `${x.avg_pct}%`), h("td", { class: "small" }, x.best ? `#${x.best.rank} ${x.best.name || x.best.roll}` : ""))));
+        head.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.k === String(sortKey)));
+      };
+      const sortBtn = (label, k) => h("button", { class: "link", type: "button", "data-k": k, onclick: () => { sortKey = k; draw(); } }, label);
+      const head = h("tr", {}, h("th", { class: "num" }, "#"), h("th", {}, isCampus ? "Campus" : "Zone"), h("th", { class: "num" }, "Students"),
+        ...R.cuts.map(c => h("th", { class: "num" }, sortBtn(`Top ${c}`, c))), h("th", { class: "num" }, sortBtn("Average", "avg")), h("th", {}, "Best rank"));
+      draw();
+      return h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, title), h("span", { class: "small muted" }, "How many of each one's students are in the institute's top 20 / 50 / 100 / 500. Click a heading to sort.")),
+        h("div", { class: "tablebox" }, h("table", { class: "top-table" }, h("thead", {}, head), tb)));
+    };
+    // rank lists
+    const listBox = h("div", { class: "card" });
+    const rowsFor = (list, rankKey) => list.map(s => h("tr", { class: s.rank <= 3 && rankKey === "rank" ? "podium" : "" }, h("td", { class: "num" }, h("b", {}, s[rankKey])),
+      rankKey !== "rank" ? h("td", { class: "num muted" }, s.rank) : null, h("td", { class: "mono" }, s.roll), h("td", {}, s.name),
+      h("td", {}, s.campus, h("div", { class: "small muted" }, [s.batch, role === "central" ? s.zone : ""].filter(Boolean).join(" · "))),
+      ...subj.map(k => h("td", { class: "num" }, (s.subjects || {})[k] ?? "")), h("td", { class: "num" }, h("b", {}, s.total)), h("td", { class: "num" }, `${s.pct}%`)));
+    const thead = rankKey => h("thead", {}, h("tr", {}, h("th", { class: "num" }, rankKey === "rank" ? "Rank" : within === "zone" ? "Zone rank" : "Campus rank"),
+      rankKey !== "rank" ? h("th", { class: "num" }, "Institute rank") : null, h("th", {}, "Roll"), h("th", {}, "Name"), h("th", {}, "Campus"),
+      ...subj.map(k => h("th", { class: "num" }, nice(k))), h("th", { class: "num" }, `Marks /${R.max}`), h("th", { class: "num" }, "%")));
+    const groupsOf = key => { const m = new Map(); for (const s of R.students) { const k = s[key]; if (!m.has(k)) m.set(k, []); m.get(k).push(s); } return [...m.values()]; };
+    const withLocalRank = list => { let prev = null, r = 0; return list.map((s, i) => { if (!prev || s.total !== prev.total) r = i + 1; prev = s; return { ...s, local: r }; }); };
+    let current = [];
+    function drawList() {
+      const nSel = h("select", { id: "top-n", "aria-label": "How many" }, [20, 50, 100, 500, 0].map(n => h("option", { value: n, selected: n === topN }, n ? `Top ${n}` : "Everyone")));
+      nSel.onchange = () => { topN = +nSel.value; drawList(); };
+      const wSel = h("select", { id: "top-within", "aria-label": "List" }, [...(role === "central" ? [["institute", "Whole institute"], ["zone", "Each zone"]] : role === "zone" ? [["institute", "Institute ranks (my zone)"], ["zone", "My zone"]] : [["institute", "Institute ranks (my campus)"]]),
+        ...(role !== "campus" ? [["campus", "Each campus"]] : [["campus", "My campus"]])].map(([v, l]) => h("option", { value: v, selected: v === within }, l)));
+      wSel.onchange = () => { within = wSel.value; drawList(); };
+      const blocks = [];
+      current = [];
+      if (within === "institute") {
+        const list = R.students.filter(s => !topN || s.rank <= topN);
+        current = list.map(s => ({ ...s, list: "Institute" }));
+        blocks.push(h("div", { class: "tablebox" }, h("table", { class: "top-table" }, thead("rank"), h("tbody", {}, rowsFor(list, "rank")))));
+        if (!list.length) blocks.push(h("p", { class: "empty" }, "None of your students are in this list."));
+      } else {
+        const key = within === "zone" ? "zone_id" : "campus_id";
+        for (const g of groupsOf(key).sort((a, b) => (within === "zone" ? a[0].zone : a[0].campus).localeCompare(within === "zone" ? b[0].zone : b[0].campus))) {
+          const ranked = withLocalRank(g).filter(s => !topN || s.local <= topN);
+          const label = within === "zone" ? g[0].zone : g[0].campus;
+          current.push(...ranked.map(s => ({ ...s, list: label })));
+          blocks.push(h("h3", { class: "top-h" }, !topN || g.length <= topN ? `${label} · all ${g.length} students` : `${label} · top ${topN} of ${g.length}`),
+            h("div", { class: "tablebox" }, h("table", { class: "top-table" }, thead("local"), h("tbody", {}, rowsFor(ranked, "local")))));
+        }
+      }
+      show(listBox, h("div", { class: "head" }, h("h2", {}, "Rank list"), h("div", { class: "row", style: "align-items:center" }, nSel, wSel,
+        h("button", { class: "btn ghost small shrink", type: "button", onclick: download }, "Download Excel"))),
+        h("p", { class: "small muted", style: "margin:0" }, "Students with equal marks share a rank. Ranks are among everyone who wrote this test."), blocks);
+    }
+    async function download() {
+      await need("xlsx");
+      const rows = current.map(s => ({ List: s.list, Rank: s.local ?? s.rank, "Institute rank": s.rank, Roll: s.roll, Name: s.name, Zone: s.zone, Campus: s.campus, Batch: s.batch,
+        ...Object.fromEntries(subj.map(k => [nice(k), (s.subjects || {})[k] ?? ""])), Marks: s.total, "Out of": R.max, Percent: s.pct, Correct: s.correct, Wrong: s.wrong }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Rank list");
+      const pres = list => list.map(x => ({ Name: x.name, ...(x.zone ? { Zone: x.zone } : {}), Students: x.n, ...Object.fromEntries(R.cuts.map(c => [`Top ${c}`, x.top[c] || 0])), "Average %": x.avg_pct, "Best rank": x.best ? x.best.rank : "" }));
+      if (R.campuses.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pres(R.campuses)), "Campuses");
+      if (R.zones.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pres(R.zones)), "Zones");
+      XLSX.writeFile(wb, `${R.test.code}-toppers.xlsx`);
+    }
+    drawList();
+    body.append(...[tiles, R.zones.length > 1 ? presence("Zones in the top lists", R.zones, false) : null, R.campuses.length > 1 ? presence("Campuses in the top lists", R.campuses, true) : null, listBox].filter(Boolean));
+  }
 
   // ---- questions: pick from the bank, section by section
   const SEC_QTYPE = { single: "single", multi: "multi", integer: "integer", decimal: "decimal|integer" };

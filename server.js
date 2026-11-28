@@ -688,6 +688,34 @@ async function studentReport(t, studentId) {
     detail: s.detail.map(d => ({ ...d, question: linked[d.q] || null })) };
 }
 
+// ------------------------------------------------------------------ toppers of one test: rank lists, best zone / campus, counts in top N
+app.get("/api/tests/:id/toppers", auth, admin, wrap(async req => {
+  const t = await visibleTest(req.user, req.params.id);
+  const { scored, max, layout } = await scoreTest(t);
+  const scope = await campusScope(req.user);
+  const names = {};
+  for (const tbl of ["zones", "campuses", "batches"]) names[tbl] = new Map((await qa(`SELECT id, name FROM ${tbl}`)).map(r => [r.id, r.name]));
+  const subjects = [...new Set(layout.sections.map(s => s.subject))];
+  const all = scored.slice().sort((a, b) => a.rank_all - b.rank_all);
+  const mine = all.filter(s => inScope(scope, s.campus_id));
+  const students = mine.map(s => ({ rank: s.rank_all, of: s.rank_all_of, roll: s.roll, name: s.name, total: s.total, pct: +((s.total / max) * 100).toFixed(1),
+    subjects: s.subjects, correct: s.correct, wrong: s.wrong, zone_id: s.zone_id, campus_id: s.campus_id, batch_id: s.batch_id,
+    zone: names.zones.get(s.zone_id) || "", campus: names.campuses.get(s.campus_id) || "", batch: names.batches.get(s.batch_id) || "" }));
+  // counts of each campus / zone among the institute's top N
+  const cuts = [20, 50, 100, 500];
+  const summary = (key, tbl) => {
+    const g = new Map();
+    for (const s of mine) {
+      const id = s[key]; if (!g.has(id)) g.set(id, { id, name: names[tbl].get(id) || "?", zone: key === "campus_id" ? names.zones.get(s.zone_id) || "" : "", n: 0, sum: 0, best: null, top: {} });
+      const x = g.get(id); x.n++; x.sum += s.total; if (!x.best || s.rank_all < x.best.rank) x.best = { rank: s.rank_all, name: s.name, roll: s.roll };
+      for (const c of cuts) if (s.rank_all <= c) x.top[c] = (x.top[c] || 0) + 1;
+    }
+    return [...g.values()].map(x => ({ id: x.id, name: x.name, zone: x.zone, n: x.n, avg_pct: +((x.sum / x.n / max) * 100).toFixed(1), best: x.best, top: x.top }));
+  };
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date }, max, subjects, appeared: all.length, cuts, students,
+    zones: req.user.role === "central" ? summary("zone_id", "zones") : [], campuses: req.user.role !== "campus" ? summary("campus_id", "campuses") : summary("campus_id", "campuses") };
+}));
+
 // ------------------------------------------------------------------ analysis dashboard: trend across tests
 // marks are cached per test and recomputed only when results or the key change
 const scoreCache = new Map();

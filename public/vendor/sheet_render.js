@@ -46,6 +46,10 @@
     return { n: n + 8, cells: cells.map(([r, c]) => [r + 4, c + 4]) };
   }
 
+  // a printed (pre-filled) bubble: solid black, read by the scanner exactly like a pen mark
+  function filled(g, b) { g.circle(b.x, b.y, b.r, { fill: "#000000", stroke: "#000000", lw: 0.19 }); }
+  // the digits to pre-fill in an ID grid, or "" when the value does not fit (then students bubble it themselves)
+  function idDigits(v, n) { const t = String(v == null ? "" : v).trim(); return /^\d+$/.test(t) && t.length <= n ? t.padStart(n, "0") : ""; }
   function bubble(g, b) {
     g.circle(b.x, b.y, b.r, { fill: "#ffffff", stroke: NAVY, lw: 0.19 });
     if (b.hide) return;
@@ -63,6 +67,7 @@
     // ID box
     g.rect(17, 26.5, 76, 57, { stroke: K, lw: 0.25 });
     const roll = st.roll ? String(st.roll).padStart(7, "0") : "";
+    const fill = { roll: idDigits(st.roll, 7), testid: idDigits(test.code, 4) };
     const idf = geom.fields.filter(f => f.kind === "roll" || f.kind === "testid");
     for (const f of idf) {
       const x0 = f.columns[0][0].x;
@@ -70,7 +75,8 @@
       f.columns.forEach((col, c) => {
         g.rect(col[0].x - 2.4, 33, 4.8, 5.2, { stroke: K, lw: 0.2 });
         if (f.kind === "roll" && roll) g.text(col[0].x, 37, roll[c], { size: 9, color: K, align: "center" });
-        for (const b of col) g.circle(b.x, b.y, b.r, { fill: "#ffffff", stroke: K, lw: 0.2 });
+        if (f.kind === "testid" && fill.testid) g.text(col[0].x, 37, fill.testid[c], { size: 9, color: K, align: "center" });
+        for (const b of col) fill[f.kind] && b.v === fill[f.kind][c] ? filled(g, b) : g.circle(b.x, b.y, b.r, { fill: "#ffffff", stroke: K, lw: 0.2 });
       });
       f.columns[0].forEach(b => g.text(x0 - 3.6, b.y + 0.9, b.v, { size: 6.8, color: K, align: "right" }));
     }
@@ -89,7 +95,7 @@
     // instructions
     g.text(145, 64.5, "INSTRUCTIONS FOR FILLING THE OMR", { size: 7.8, bold: true, color: K, align: "center" });
     g.line(122, 65.3, 168, 65.3, { stroke: K, lw: 0.2 });
-    g.text(145, 68.8, "1. Your Student ID must be correctly marked", { size: 6.8, color: K, align: "center" });
+    g.text(145, 68.8, fill.roll ? "1. Student ID is pre-filled. Check that it is yours" : "1. Your Student ID must be correctly marked", { size: 6.8, color: K, align: "center" });
     g.text(145, 72.2, "2. Use only Black or Blue Pen for marking", { size: 6.8, color: K, align: "center" });
     g.text(122, 76.4, "WRONG METHOD", { size: 6.8, bold: true, color: K, align: "center" });
     g.text(168, 76.4, "CORRECT METHOD", { size: 6.8, bold: true, color: K, align: "center" });
@@ -159,13 +165,14 @@
       g.rect(bx - 2.1, O.ROLL_Y0 - 5.6, 4.2, 3.9, { stroke: LINE, lw: 0.15 });
       if (roll) g.text(bx, O.ROLL_Y0 - 2.6, roll[c], { size: 8, color: INK, align: "center" });
     }
-    for (const col of O.rollField().columns) for (const b of col) bubble(g, b);
+    const pre = idDigits(st.roll, O.ROLL_DIGITS);
+    O.rollField().columns.forEach((col, c) => { for (const b of col) pre && b.v === pre[c] ? filled(g, b) : bubble(g, b); });
     // QR
     const [qx, qy, qs] = O.QR_BOX;
     g.qr(qx, qy, qs, qrModules(O.qrPayload(layout.id, test.code, st.roll, st.paper)));
     g.text(qx + qs / 2, qy + qs + 2.8, "Do not write on this code", { size: 6, color: GREY, align: "center" });
-    g.text(qx + qs / 2, qy + qs + 6.6, "Write roll no. in boxes and", { size: 6.8, bold: true, color: NAVY, align: "center" });
-    g.text(qx + qs / 2, qy + qs + 9.6, "darken matching bubbles", { size: 6.8, bold: true, color: NAVY, align: "center" });
+    g.text(qx + qs / 2, qy + qs + 6.6, pre ? "Roll no. is pre-filled." : "Write roll no. in boxes and", { size: 6.8, bold: true, color: NAVY, align: "center" });
+    g.text(qx + qs / 2, qy + qs + 9.6, pre ? "Check that it is yours" : "darken matching bubbles", { size: 6.8, bold: true, color: NAVY, align: "center" });
     // section headers
     for (const [x, y, hw, text] of geom.headers) {
       g.rect(x, y, hw, 4, { fill: GOLD_LIGHT });

@@ -1071,12 +1071,13 @@
         const rows = list.slice().sort((a, b) => sortKey === "avg" ? b.avg_pct - a.avg_pct : (b.top[sortKey] || 0) - (a.top[sortKey] || 0) || b.avg_pct - a.avg_pct);
         show(tb, rows.map((x, i) => h("tr", {}, h("td", { class: "num" }, i + 1), h("td", {}, h("b", {}, x.name), isCampus && x.zone ? h("div", { class: "small muted" }, x.zone) : null),
           h("td", { class: "num" }, x.n), ...R.cuts.map(c => h("td", { class: "num" }, x.top[c] ? h("b", {}, x.top[c]) : h("span", { class: "muted" }, "0"))),
-          h("td", { class: "num" }, `${x.avg_pct}%`), h("td", { class: "small" }, x.best ? `#${x.best.rank} ${x.best.name || x.best.roll}` : ""))));
+          h("td", { class: "num" }, `${x.avg_pct}%`), ...(R.subjects.length > 1 ? R.subjects.map(k => h("td", { class: "num" }, (x.subjects || {})[k] ?? "—")) : []), h("td", { class: "small" }, x.best ? `#${x.best.rank} ${x.best.name || x.best.roll}` : ""))));
         head.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.k === String(sortKey)));
       };
       const sortBtn = (label, k) => h("button", { class: "link", type: "button", "data-k": k, onclick: () => { sortKey = k; draw(); } }, label);
       const head = h("tr", {}, h("th", { class: "num" }, "#"), h("th", {}, isCampus ? "Campus" : "Zone"), h("th", { class: "num" }, "Students"),
-        ...R.cuts.map(c => h("th", { class: "num" }, sortBtn(`Top ${c}`, c))), h("th", { class: "num" }, sortBtn("Average", "avg")), h("th", {}, "Best rank"));
+        ...R.cuts.map(c => h("th", { class: "num" }, sortBtn(`Top ${c}`, c))), h("th", { class: "num" }, sortBtn("Average", "avg")),
+        ...(R.subjects.length > 1 ? R.subjects.map(k => h("th", { class: "num" }, `${k[0] + k.slice(1).toLowerCase()} avg`)) : []), h("th", {}, "Best rank"));
       draw();
       return h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, title), h("span", { class: "small muted" }, "How many of each one's students are in the institute's top 20 / 50 / 100 / 500. Click a heading to sort.")),
         h("div", { class: "tablebox" }, h("table", { class: "top-table" }, h("thead", {}, head), tb)));
@@ -1126,7 +1127,7 @@
         ...Object.fromEntries(subj.map(k => [nice(k), (s.subjects || {})[k] ?? ""])), Marks: s.total, "Out of": R.max, Percent: s.pct, Correct: s.correct, Wrong: s.wrong }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Rank list");
-      const pres = list => list.map(x => ({ Name: x.name, ...(x.zone ? { Zone: x.zone } : {}), Students: x.n, ...Object.fromEntries(R.cuts.map(c => [`Top ${c}`, x.top[c] || 0])), "Average %": x.avg_pct, "Best rank": x.best ? x.best.rank : "" }));
+      const pres = list => list.map(x => ({ Name: x.name, ...(x.zone ? { Zone: x.zone } : {}), Students: x.n, ...Object.fromEntries(R.cuts.map(c => [`Top ${c}`, x.top[c] || 0])), "Average %": x.avg_pct, ...Object.fromEntries((R.subjects.length > 1 ? R.subjects : []).map(k => [`${k} avg`, (x.subjects || {})[k] ?? ""])), "Best rank": x.best ? x.best.rank : "" }));
       if (R.campuses.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pres(R.campuses)), "Campuses");
       if (R.zones.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pres(R.zones)), "Zones");
       XLSX.writeFile(wb, `${R.test.code}-toppers.xlsx`);
@@ -1523,9 +1524,17 @@
         h("td", { class: "num" }, s.correct), h("td", { class: "num" }, s.wrong), h("td", { class: "num" }, s.blank),
         h("td", { class: "num" }, s.rank_campus), h("td", { class: "num" }, s.rank_batch))));
     }
+    const multi = a.subjects.length > 1, cap = x => x[0] + x.slice(1).toLowerCase();
     const groupTable = (title, rows) => rows.length > 1 || (rows.length && title !== "Batches") ? h("div", { class: "card" }, h("h2", {}, title), h("div", { class: "tablebox" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Name", "Students", "Average", "Top"].map(x => h("th", {}, x)))),
-      h("tbody", {}, rows.sort((x, y) => y.avg - x.avg).map(r => h("tr", {}, h("td", {}, title === "Batches" ? batchFull(r.id) : r.name), h("td", { class: "num" }, r.n), h("td", { class: "num" }, r.avg), h("td", { class: "num" }, r.top))))))) : null;
+      h("thead", {}, h("tr", {}, ["Name", "Students", "Average", ...(multi ? a.subjects.map(x => `${cap(x)} avg`) : []), "Top"].map(x => h("th", {}, x)))),
+      h("tbody", {}, rows.sort((x, y) => y.avg - x.avg).map(r => h("tr", {}, h("td", {}, title === "Batches" ? batchFull(r.id) : r.name), h("td", { class: "num" }, r.n), h("td", { class: "num" }, h("b", {}, r.avg)),
+        ...(multi ? a.subjects.map(x => h("td", { class: "num" }, (r.subjects || {})[x] ?? "—")) : []), h("td", { class: "num" }, r.top))))))) : null;
+    const subTop = sub => sorted.reduce((b, s) => ((s.subjects[sub] ?? 0) > (b.subjects[sub] ?? 0) ? s : b), sorted[0]);
+    const subjectCard = multi && a.subject_avg ? h("div", { class: "card" }, h("h2", {}, "Subject-wise summary"), h("div", { class: "tablebox" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Subject", "Out of", "Average", "Average %", "Highest", "Topper"].map(x => h("th", {}, x)))),
+      h("tbody", {}, a.subjects.map(sub => { const tp = subTop(sub), mx = (a.subject_max || {})[sub] || 0;
+        return h("tr", {}, h("td", {}, h("b", {}, cap(sub))), h("td", { class: "num" }, mx), h("td", { class: "num" }, a.subject_avg[sub]), h("td", { class: "num" }, mx ? `${Math.round((a.subject_avg[sub] / mx) * 100)}%` : "—"),
+          h("td", { class: "num" }, h("b", {}, tp.subjects[sub] ?? 0)), h("td", {}, tp.name || tp.roll)); }))))) : null;
     const hardest = a.questions.slice().sort((x, y) => x.right / x.n - y.right / y.n).slice(0, 10);
     if (a.keyCount < a.total_questions) body.append(h("p", { class: "pill warn", style: "padding:8px 12px;border-radius:6px;white-space:normal" }, `The answer key has ${a.keyCount} of ${a.total_questions} answers. Marks count only keyed questions.`));
     body.append(
@@ -1533,7 +1542,8 @@
         h("div", { class: "stat gold" }, h("b", {}, avg.toFixed(1)), h("span", {}, `Average of ${a.max}`)),
         h("div", { class: "stat ok" }, h("b", {}, sorted[0].total), h("span", {}, `Top · ${sorted[0].name || sorted[0].roll}`)),
         h("div", { class: "stat" }, h("b", {}, sorted[Math.floor(sorted.length / 2)].total), h("span", {}, "Median"))),
-      h("div", { class: "grid3" }, groupTable("Zones", a.by_zone), groupTable("Campuses", a.by_campus), groupTable("Batches", a.by_batch)),
+      ...(subjectCard ? [subjectCard] : []),
+      h("div", { class: multi ? "stack" : "grid3" }, groupTable("Zones", a.by_zone), groupTable("Campuses", a.by_campus), groupTable("Batches", a.by_batch)),
       h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Students"), h("div", { class: "row" }, h("button", { class: "btn small ghost", type: "button", onclick: () => {
         download(`results_${t.code}.csv`, csv([["rank", "roll", "name", "zone", "campus", "batch", "total", ...a.subjects, "correct", "wrong", "blank", "campus rank", "batch rank"],
           ...sorted.map(s => [s.rank_all, s.roll, s.name, zoneName(s.zone_id), campusName(s.campus_id), (batchOf(s.batch_id) || {}).name, s.total, ...a.subjects.map(x => s.subjects[x] ?? 0), s.correct, s.wrong, s.blank, s.rank_campus, s.rank_batch])]));
@@ -1580,7 +1590,15 @@
         const got = rep.by_subject[s] || 0, out = rep.subject_max[s] || 1;
         return h("div", { class: "barrow", style: "grid-template-columns:110px minmax(0,1fr) 80px" }, h("span", {}, s[0] + s.slice(1).toLowerCase()),
           h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(100, (got / out) * 100))}%` })), h("span", { class: "num" }, `${got} / ${out}`));
-      }))),
+      })),
+        rep.subject_detail ? h("div", { class: "tablebox", style: "margin-top:12px" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Subject", "Marks", "Right", "Wrong", "Blank", "Accuracy", "Batch avg", "Institute avg", "Highest", "Rank in batch", "Overall rank"].map(x => h("th", {}, x)))),
+          h("tbody", {}, rep.subject_detail.map(d => h("tr", {}, h("td", {}, h("b", {}, d.subject[0] + d.subject.slice(1).toLowerCase())),
+            h("td", { class: "num" }, h("b", {}, `${d.marks} / ${rep.subject_max[d.subject] || 0}`)), h("td", { class: "num" }, d.right + (d.partial ? ` (+${d.partial} part)` : "")), h("td", { class: "num" }, d.wrong), h("td", { class: "num" }, d.blank),
+            h("td", { class: "num" }, d.accuracy == null ? "—" : `${d.accuracy}%`), h("td", { class: "num" }, d.batch_avg), h("td", { class: "num" }, d.all_avg), h("td", { class: "num" }, d.top),
+            h("td", { class: "num" }, `${d.rank_batch.rank} / ${d.rank_batch.of}`), h("td", { class: "num" }, `${d.rank_all.rank} / ${d.rank_all.of}`))),
+            rep.subject_detail.length > 1 ? h("tr", { class: "totalrow" }, h("td", {}, h("b", {}, "Total")), h("td", { class: "num" }, h("b", {}, `${rep.total} / ${rep.max}`)), h("td", { class: "num" }, rep.correct), h("td", { class: "num" }, rep.wrong), h("td", { class: "num" }, rep.blank),
+              h("td", {}, ""), h("td", { class: "num" }, rep.batch_avg), h("td", { class: "num" }, rep.all_avg), h("td", { class: "num" }, rep.top_total), h("td", { class: "num" }, `${rep.rank_batch} / ${rep.rank_batch_of}`), h("td", { class: "num" }, `${rep.rank_all} / ${rep.rank_all_of}`)) : null))) : null),
       h("div", { class: "card" }, h("div", { class: "head" }, h("h2", {}, "Question-wise"), filter), h("div", { class: "tablebox" }, h("table", {}, h("thead", {}, h("tr", {}, ["Q", "Subject", "Marked", "Correct", "Result", "Marks"].map(x => h("th", {}, x)))), tb)), qbox));
     draw();
   }

@@ -644,9 +644,11 @@ app.get("/api/tests/:id/analysis", auth, admin, wrap(async req => {
   for (const tbl of ["zones", "campuses", "batches"]) names[tbl] = new Map((await qa(`SELECT id, name FROM ${tbl}`)).map(r => [r.id, r.name]));
   const group = (k, tbl) => {
     const g = {};
-    for (const s of mine) { const id = s[k]; (g[id] = g[id] || []).push(s.total); }
-    return Object.entries(g).map(([id, a]) => ({ id: Number(id), name: names[tbl].get(Number(id)) || "?", n: a.length,
-      avg: +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1), top: Math.max(...a) }));
+    for (const s of mine) { const id = s[k]; (g[id] = g[id] || []).push(s); }
+    return Object.entries(g).map(([id, list]) => { const a = list.map(x => x.total);
+      return { id: Number(id), name: names[tbl].get(Number(id)) || "?", n: a.length,
+        avg: +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1), top: Math.max(...a),
+        subjects: Object.fromEntries(subjects.map(sb => [sb, +(list.reduce((x, y) => x + ((y.subjects || {})[sb] || 0), 0) / list.length).toFixed(1)])) }; });
   };
   const perQ = {};
   for (const s of mine) for (const d of s.detail) {
@@ -658,6 +660,8 @@ app.get("/api/tests/:id/analysis", auth, admin, wrap(async req => {
                        WHERE tb.test_id=? AND u.role='student' AND u.active=1 AND ${inList("u.campus_id", scope)}`, t.id)).n;
   return {
     test: await testRow(t), max, subjects, keyCount, total_questions: OMR.totalQ(layout), expected,
+    subject_max: layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {}),
+    subject_avg: Object.fromEntries(subjects.map(sb => [sb, mine.length ? +(mine.reduce((x, y) => x + ((y.subjects || {})[sb] || 0), 0) / mine.length).toFixed(1) : 0])),
     students: mine.map(s => ({ student_id: s.student_id, roll: s.roll, name: s.name, batch_id: s.batch_id, campus_id: s.campus_id,
       zone_id: s.zone_id, total: s.total, subjects: s.subjects, correct: s.correct, partial: s.partial, wrong: s.wrong, blank: s.blank,
       rank_all: s.rank_all, rank_all_of: s.rank_all_of, rank_campus: s.rank_campus, rank_batch: s.rank_batch })),
@@ -679,8 +683,21 @@ async function studentReport(t, studentId) {
   if (!s) throw new HttpError(404, "No sheet read for this student yet.");
   const linked = Object.fromEntries((await qa(`SELECT tq.qno, q.text, q.image, q.options, q.solution, q.chapter, q.fmt, q.source FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id))
     .map(r => [r.qno, { text: r.text, image: r.image, options: JSON.parse(r.options || "[]"), solution: r.solution, chapter: r.chapter, fmt: r.fmt, source: r.source }]));
-  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title }, max,
-    subjects: [...new Set(layout.sections.map(x => x.subject))],
+  const subjects = [...new Set(layout.sections.map(x => x.subject))];
+  const avg = a => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : 0);
+  const rankIn = (list, k) => { const mine = (s.subjects || {})[k] || 0; return { rank: 1 + list.filter(x => ((x.subjects || {})[k] || 0) > mine).length, of: list.length }; };
+  const batchMates = scored.filter(x => x.batch_id === s.batch_id);
+  const subject_detail = subjects.map(k => {
+    const d = s.detail.filter(x => x.subject === k), cnt = r => d.filter(x => r.includes(x.result)).length;
+    const right = cnt(["correct", "bonus"]), wrong = cnt(["wrong"]), partial = cnt(["partial"]), blank = cnt(["blank"]);
+    const all = scored.map(x => (x.subjects || {})[k] || 0), mates = batchMates.map(x => (x.subjects || {})[k] || 0);
+    return { subject: k, marks: (s.subjects || {})[k] || 0, right, wrong, partial, blank, questions: d.length,
+      accuracy: right + wrong + partial ? Math.round(((right + partial * 0.5) / (right + wrong + partial)) * 100) : null,
+      rank_batch: rankIn(batchMates, k), rank_all: rankIn(scored, k), batch_avg: avg(mates), all_avg: avg(all), top: Math.max(...all) };
+  });
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date, sheet_title: layout.title }, max, subject_detail,
+    batch_avg: avg(batchMates.map(x => x.total)), all_avg: avg(scored.map(x => x.total)), top_total: Math.max(...scored.map(x => x.total)),
+    subjects,
     subject_max: layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {}),
     total: s.total, by_subject: s.subjects, correct: s.correct, partial: s.partial, wrong: s.wrong, blank: s.blank,
     rank_all: s.rank_all, rank_all_of: s.rank_all_of, rank_campus: s.rank_campus, rank_campus_of: s.rank_campus_of,
@@ -706,13 +723,15 @@ app.get("/api/tests/:id/toppers", auth, admin, wrap(async req => {
   const summary = (key, tbl) => {
     const g = new Map();
     for (const s of mine) {
-      const id = s[key]; if (!g.has(id)) g.set(id, { id, name: names[tbl].get(id) || "?", zone: key === "campus_id" ? names.zones.get(s.zone_id) || "" : "", n: 0, sum: 0, best: null, top: {} });
-      const x = g.get(id); x.n++; x.sum += s.total; if (!x.best || s.rank_all < x.best.rank) x.best = { rank: s.rank_all, name: s.name, roll: s.roll };
+      const id = s[key]; if (!g.has(id)) g.set(id, { id, name: names[tbl].get(id) || "?", zone: key === "campus_id" ? names.zones.get(s.zone_id) || "" : "", n: 0, sum: 0, sub: {}, best: null, top: {} });
+      const x = g.get(id); x.n++; x.sum += s.total; for (const k of subjects) x.sub[k] = (x.sub[k] || 0) + ((s.subjects || {})[k] || 0); if (!x.best || s.rank_all < x.best.rank) x.best = { rank: s.rank_all, name: s.name, roll: s.roll };
       for (const c of cuts) if (s.rank_all <= c) x.top[c] = (x.top[c] || 0) + 1;
     }
-    return [...g.values()].map(x => ({ id: x.id, name: x.name, zone: x.zone, n: x.n, avg_pct: +((x.sum / x.n / max) * 100).toFixed(1), best: x.best, top: x.top }));
+    return [...g.values()].map(x => ({ id: x.id, name: x.name, zone: x.zone, n: x.n, avg_pct: +((x.sum / x.n / max) * 100).toFixed(1), best: x.best, top: x.top,
+      subjects: Object.fromEntries(subjects.map(k => [k, +(x.sub[k] / x.n).toFixed(1)])) }));
   };
-  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date }, max, subjects, appeared: all.length, cuts, students,
+  const subject_max = layout.sections.reduce((m, x) => ((m[x.subject] = (m[x.subject] || 0) + x.count * x.marks.correct), m), {});
+  return { test: { id: t.id, code: t.code, name: t.name, test_date: t.test_date }, max, subjects, subject_max, appeared: all.length, cuts, students,
     zones: req.user.role === "central" ? summary("zone_id", "zones") : [], campuses: req.user.role !== "campus" ? summary("campus_id", "campuses") : summary("campus_id", "campuses") };
 }));
 

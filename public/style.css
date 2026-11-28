@@ -383,3 +383,5 @@ svg.dash-chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray:
 .top-table th button.link.on { color: var(--navy); text-decoration: underline; }
 .top-table tr.podium td { background: var(--gold-soft); }
 .top-h { margin: 10px 0 0; }
+.stack { display: grid; gap: 16px }
+.totalrow td { border-top: 2px solid var(--line); background: var(--sunk) }

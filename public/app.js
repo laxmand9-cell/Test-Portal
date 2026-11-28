@@ -519,7 +519,9 @@
   const QT = { single: "Single correct", multi: "One or more correct", integer: "Integer", decimal: "Decimal" };
   const QLEVELS = ["Easy", "Medium", "Difficult"];
   // ---- question bank: JEE Main bank / JEE Advanced bank (past-year or practice → subject → chapter) and the Portal bank (imported papers, own questions)
-  const BANK_TABS = [["main", "JEE Main bank"], ["adv", "JEE Advanced bank"], ["portal", "Portal bank"]];
+  const BANK_TABS = [["main", "JEE Main bank"], ["adv", "JEE Advanced bank"], ["eapcet", "EAPCET bank"], ["neet", "NEET bank"], ["portal", "Portal bank"]];
+  const BANK_SUBJECTS = { main: ["Physics", "Chemistry", "Mathematics"], adv: ["Physics", "Chemistry", "Mathematics"], eapcet: ["Mathematics", "Physics", "Chemistry"],
+    neet: ["Physics", "Chemistry", "Botany", "Zoology"], portal: [] };
   const SUBJ_ORDER = ["physics", "chemistry", "mathematics", "maths", "biology", "botany", "zoology"];
   const bankView = { bank: "main", pyq: "1", subject: "", chapter: "" };
   route(/^\/bank$/, async view => {
@@ -563,10 +565,12 @@
       pyqBox.hidden = !jee;
       pyqBox.replaceChildren(...[["1", "PYQ", pc.pyq], ["0", "Non-PYQ", pc.practice], ["", "All", (pc.pyq || 0) + (pc.practice || 0)]].map(([v, t, c]) =>
         h("button", { type: "button", class: V.pyq === v ? "on" : "", "aria-pressed": String(V.pyq === v), onclick: () => pick("pyq", v) }, t, h("small", {}, ` ${c || 0}`))));
-      const subs = F.subjects.slice().sort((a, b) => (SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99) || a.localeCompare(b));
+      const std = BANK_SUBJECTS[V.bank] || [];
+      const subs = [...std, ...F.subjects.filter(x => !std.some(y => y.toLowerCase() === x.toLowerCase()))];
+      if (!std.length) subs.sort((a, b) => (SUBJ_ORDER.indexOf(a.toLowerCase()) + 1 || 99) - (SUBJ_ORDER.indexOf(b.toLowerCase()) + 1 || 99) || a.localeCompare(b));
       const tot = Object.values(F.subject_counts || {}).reduce((a, b) => a + b, 0);
-      subjBox.replaceChildren(...[["", "All subjects", tot], ...subs.map(x => [x, nice(x), (F.subject_counts || {})[x] || 0])].map(([v, t, c]) =>
-        h("button", { type: "button", class: "sp" + (V.subject.toLowerCase() === v.toLowerCase() ? " on" : ""), onclick: () => pick("subject", v) }, t, h("small", {}, c))));
+      subjBox.replaceChildren(...[["", "All subjects", tot], ...subs.map(x => [x, nice(x), Object.entries(F.subject_counts || {}).filter(([k]) => k.toLowerCase() === x.toLowerCase()).reduce((a, [, n]) => a + n, 0)])].map(([v, t, c]) =>
+        h("button", { type: "button", class: "sp" + (V.subject.toLowerCase() === v.toLowerCase() ? " on" : "") + (c ? "" : " none"), onclick: () => pick("subject", v) }, t, h("small", {}, c))));
       const sv = V.subject.toLowerCase();
       fill(chap, V.subject ? `All ${nice(V.subject)} chapters` : "All chapters", [...F.chapters.filter(c => !sv || c.subject.toLowerCase() === sv).map(c => [c.chapter, `${c.chapter} (${c.n})`]),
         ...((F.untagged || []).some(x => !sv || x.toLowerCase() === sv) ? [["__none", "Not tagged yet"]] : [])], V.chapter);
@@ -575,7 +579,7 @@
       matching = r.matching;
       ids.length = 0; ids.push(...r.rows.map(x => x.id));
       count.textContent = matching ? `${matching} question${matching === 1 ? "" : "s"} · showing ${page * n + 1}–${page * n + r.rows.length}` : "";
-      const emptyMsg = !((F.banks || {})[V.bank]) ? (V.bank === "adv" ? "The JEE Advanced bank is empty for now." : V.bank === "portal" ? "No questions here yet. Questions from papers you import (a test's Questions tab → Import from PDF) and questions you add yourself appear here." : "This bank is empty. Add a ready-made set above.") : "No questions match these filters.";
+      const emptyMsg = !((F.banks || {})[V.bank]) ? (["adv", "eapcet", "neet"].includes(V.bank) ? `The ${BANK_TABS.find(b => b[0] === V.bank)[1]} is empty for now.` : V.bank === "portal" ? "No questions here yet. Questions from papers you import (a test's Questions tab → Import from PDF) and questions you add yourself appear here." : "This bank is empty. Add a ready-made set above.") : "No questions match these filters.";
       show(list, r.rows.length ? r.rows.map((x, i) => questionCard(x, page * n + i + 1, ids)) : h("p", { class: "empty" }, emptyMsg));
       drawPager(pager); drawPager(pagerTop);
       if (keepPage === true) list.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -583,7 +587,7 @@
     chap.onchange = () => { V.chapter = chap.value; load("chap"); };
     [yr, paper, typ, dif, size].forEach(x => (x.onchange = () => load(false)));
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => load(false), 300); };
-    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Choose a bank, then past-year or practice, subject and chapter.")),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Question bank"), h("p", { class: "sub" }, "Choose a bank, then PYQ or Non-PYQ, subject and chapter.")),
       h("div", { class: "row" }, h("button", { class: "btn ghost", type: "button", onclick: () => findDuplicates(() => load(true)) }, "Find duplicates"),
         h("a", { class: "btn gold", href: `#/bank/new` }, "Add question"))),
       packsCard(() => load(false)), tabsBox,

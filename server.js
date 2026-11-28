@@ -341,10 +341,13 @@ function cleanQuestion(b) {
   };
 }
 // three banks: JEE Main and JEE Advanced (ready-made sets, past-year and practice) and the Portal bank (papers imported from PDF, questions added here)
-const BANKS = ["main", "adv", "portal"];
+const BANKS = ["main", "adv", "eapcet", "neet", "portal"];
 async function sortBanks() {
-  await run("UPDATE questions SET bank='portal' WHERE COALESCE(bank,'')='' AND (ref LIKE 'imp:%' OR COALESCE(ref,'')='') AND lower(COALESCE(exam,'')) NOT LIKE '%adv%'");
+  // questions tagged with an exam go to that exam's bank; imported papers and own questions go to the Portal bank; the rest to JEE Main
   await run("UPDATE questions SET bank='adv' WHERE COALESCE(bank,'')='' AND lower(COALESCE(exam,'')) LIKE '%adv%'");
+  await run("UPDATE questions SET bank='neet' WHERE COALESCE(bank,'')='' AND lower(COALESCE(exam,'')) LIKE '%neet%'");
+  await run("UPDATE questions SET bank='eapcet' WHERE COALESCE(bank,'')='' AND (lower(COALESCE(exam,'')) LIKE '%eapcet%' OR lower(COALESCE(exam,'')) LIKE '%eamcet%')");
+  await run("UPDATE questions SET bank='portal' WHERE COALESCE(bank,'')='' AND (ref LIKE 'imp:%' OR COALESCE(ref,'')='')");
   await run("UPDATE questions SET bank='main' WHERE COALESCE(bank,'')=''");
 }
 // filters: each of these may hold several values separated by "|" (e.g. chapter=Optics|Waves)

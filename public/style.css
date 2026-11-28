@@ -575,7 +575,7 @@ body.exam-mode *, body.exam-mode *::before, body.exam-mode *::after { animation:
 .sm-bar i { display: block; height: 100%; background: var(--ok) }
 
 /* question bank: three banks, PYQ / Non-PYQ, subject pills */
-.bank-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px }
+.bank-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px }
 .bank-tabs button { display: grid; gap: 2px; text-align: left; font: inherit; color: var(--fg); background: var(--surface); border: 1.5px solid var(--line);
   border-radius: 10px; padding: 10px 14px; cursor: pointer; transition: border-color .15s, background .15s }
 .bank-tabs button b { font-size: 15.5px; color: var(--navy) } .bank-tabs button span { font-size: 12.5px; color: var(--muted) }
@@ -587,4 +587,5 @@ body.exam-mode *, body.exam-mode *::before, body.exam-mode *::after { animation:
 .subj-pills .sp small { font-size: 11.5px; font-weight: 700; background: var(--sunk); color: var(--muted); border-radius: 999px; padding: 0 7px }
 .subj-pills .sp:hover { border-color: var(--gold) }
 .subj-pills .sp.on { background: var(--gold); border-color: var(--gold); color: #1a1406 } .subj-pills .sp.on small { background: rgba(255,255,255,.55); color: #1a1406 }
-@media (max-width: 640px) { .bank-tabs { grid-template-columns: 1fr } }
+@media (max-width: 640px) { .bank-tabs { grid-template-columns: 1fr 1fr } }
+.subj-pills .sp.none:not(.on) { opacity: .6 }

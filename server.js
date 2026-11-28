@@ -338,6 +338,7 @@ function cleanQuestion(b) {
     difficulty: levelOf(b.difficulty), exam: str(b.exam, 40),
     text: str(b.text, 60000), image, options: JSON.stringify(options), answer, solution: str(b.solution, 60000),
     fmt: b.fmt === "html" ? "html" : "", source: str(b.source, 120), bank: BANKS.includes(b.bank) ? b.bank : "portal",
+    qstyle: ["paragraph", "matrix"].includes(b.qstyle) ? b.qstyle : "",
   };
 }
 // three banks: JEE Main and JEE Advanced (ready-made sets, past-year and practice) and the Portal bank (papers imported from PDF, questions added here)
@@ -354,6 +355,7 @@ async function sortBanks() {
 function questionFilter(qy) {
   const where = ["1=1"], args = [];
   if (BANKS.includes(qy.bank)) { where.push("bank=?"); args.push(qy.bank); }
+  if (["paragraph", "matrix"].includes(qy.qstyle)) { where.push("qstyle=?"); args.push(qy.qstyle); }
   const many = (k, col = k, num = false) => {
     const vals = String(qy[k] || "").split("|").map(v => v.trim()).filter(Boolean).slice(0, 200);
     if (!vals.length) return;
@@ -376,7 +378,7 @@ app.get("/api/questions", auth, admin, wrap(async req => {
   const full = req.query.full === "1";
   const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), full ? 50 : 300), offset = Math.max(0, Number(req.query.offset) || 0);
   const cols = full ? "text, solution, image, options" : "substr(text,1,400) AS text, CASE WHEN image != '' THEN 1 ELSE 0 END AS has_image";
-  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, ${cols}, answer, fmt, source, year, exam
+  const rows = await qa(`SELECT id, subject, chapter, topic, qtype, qstyle, difficulty, ${cols}, answer, fmt, source, year, exam
                    FROM questions WHERE ${w} ORDER BY ${req.query.order === "random" ? "RANDOM()" : "subject, chapter, year DESC, id"} LIMIT ${limit} OFFSET ${offset}`, ...args);
   if (full) rows.forEach(r => (r.options = JSON.parse(r.options || "[]")));
   // lists for the filters, limited to the chosen bank (and past-year / practice) so every choice has questions behind it
@@ -461,13 +463,13 @@ app.get("/api/questions/:id", auth, admin, wrap(async req => {
 }));
 app.post("/api/questions", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, exam, bank)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source, q.exam, q.bank) };
+  return { id: await insert(`INSERT INTO questions (subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, created_by, fmt, source, exam, bank, qstyle)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, req.user.id, q.fmt, q.source, q.exam, q.bank, q.qstyle) };
 }));
 app.put("/api/questions/:id", auth, central, wrap(async req => {
   const q = cleanQuestion(req.body || {});
-  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=?, exam=?, bank=? WHERE id=?`,
-    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, q.exam, q.bank, req.params.id);
+  await run(`UPDATE questions SET subject=?, chapter=?, topic=?, qtype=?, difficulty=?, text=?, image=?, options=?, answer=?, solution=?, fmt=?, source=?, exam=?, bank=?, qstyle=? WHERE id=?`,
+    q.subject, q.chapter, q.topic, q.qtype, q.difficulty, q.text, q.image, q.options, q.answer, q.solution, q.fmt, q.source, q.exam, q.bank, q.qstyle, req.params.id);
   return { ok: true };
 }));
 app.delete("/api/questions/:id", auth, central, wrap(async req => {

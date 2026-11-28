@@ -529,7 +529,16 @@
     const chap = h("select", { id: "qb-chapter", "aria-label": "Chapter" });
     const yr = h("select", { id: "qb-year", "aria-label": "Year" });
     const paper = h("select", { id: "qb-paper", "aria-label": "Imported paper" });
-    const typ = h("select", { id: "qb-type", "aria-label": "Type" }, h("option", { value: "" }, "All types"), Object.entries(QT).map(([k, v]) => h("option", { value: k }, v)));
+    const typ = h("select", { id: "qb-type", "aria-label": "Question type" });
+    let typBank = null;
+    const fillTypes = () => { // JEE Main, EAPCET and NEET have no "one or more correct"; JEE Advanced adds paragraph and match the column
+      if (typBank === V.bank) return; typBank = V.bank;
+      const keep = typ.value;
+      const list = [["", "All types"], ...Object.entries(QT).filter(([k]) => k !== "multi" || V.bank === "adv" || V.bank === "portal"),
+        ...(V.bank === "adv" ? [["style:paragraph", "Paragraph"], ["style:matrix", "Match the column"]] : [])];
+      typ.replaceChildren(...list.map(([k, v]) => h("option", { value: k, selected: k === keep }, v)));
+      if (typ.value !== keep) typ.value = "";
+    };
     const dif = h("select", { id: "qb-diff", "aria-label": "Level" }, h("option", { value: "" }, "Any level"), QLEVELS.map(d => h("option", {}, d)));
     const size = h("select", { id: "qb-size", "aria-label": "Questions per page" }, [10, 15, 20].map(n => h("option", { value: n }, `${n} per page`)));
     const q = h("input", { id: "qb-q", placeholder: "Search words, chapter or exam", "aria-label": "Search" });
@@ -554,8 +563,9 @@
       if (k === "pyq") { V.subject = ""; V.chapter = ""; yr.value = ""; } if (k === "subject") V.chapter = ""; load(false); };
     async function load(keepPage) {
       if (!keepPage) page = 0;
+      fillTypes();
       const n = +size.value, jee = V.bank !== "portal";
-      const p = new URLSearchParams(Object.entries({ bank: V.bank, pyq: jee ? V.pyq : "", subject: V.subject, chapter: V.chapter, qtype: typ.value, difficulty: dif.value,
+      const p = new URLSearchParams(Object.entries({ bank: V.bank, pyq: jee ? V.pyq : "", subject: V.subject, chapter: V.chapter, qtype: typ.value.startsWith("style:") ? "" : typ.value, qstyle: typ.value.startsWith("style:") ? typ.value.slice(6) : "", difficulty: dif.value,
         year: jee && V.pyq === "1" ? yr.value : "", paper: jee ? "" : paper.value, q: q.value.trim() }).filter(([, v]) => v));
       p.set("limit", n); p.set("offset", page * n); p.set("full", "1");
       const r = await GET("/api/questions?" + p), F = r.facets;
@@ -681,7 +691,7 @@
     if (sol) sol.addEventListener("toggle", () => { if (sol.open && sol.children.length === 1) sol.append(x.fmt === "html" ? richNode(x.solution) : h("div", { style: "white-space:pre-wrap" }, x.solution)); });
     return h("article", { class: "qc" },
       h("div", { class: "qc-head" }, h("b", { class: "qc-no" }, `${no}.`),
-        h("span", { class: "small muted qc-meta" }, [x.chapter, x.topic, QT[x.qtype]].filter(Boolean).join(" · ")),
+        h("span", { class: "small muted qc-meta" }, [x.chapter, x.topic, x.qstyle === "paragraph" ? "Paragraph" : x.qstyle === "matrix" ? "Match the column" : "", QT[x.qtype]].filter(Boolean).join(" · ")),
         h("span", { class: "pill lv" + (QLEVELS.indexOf(x.difficulty) + 1) }, x.difficulty), x.source ? h("span", { class: "pill navy" }, x.source) : x.exam ? h("span", { class: "pill" }, x.exam) : null),
       x.fmt === "html" ? richNode(splitOptions(x).stem) : x.text ? h("div", { style: "white-space:pre-wrap" }, x.text) : null,
       x.image ? h("img", { src: x.image, alt: `Question ${x.id}`, style: "max-width:100%;border-radius:4px" }) : null,
@@ -760,6 +770,7 @@
     const qtype = h("select", { id: "q-type" }, Object.entries(QT).map(([k, v]) => h("option", { value: k, selected: qd.qtype === k }, v)));
     const diff = h("select", { id: "q-diff" }, QLEVELS.map(d => h("option", { selected: qd.difficulty === d }, d)));
     const exam = h("input", { id: "q-exam", value: qd.exam || "", list: "exam-list", maxlength: 40, placeholder: "e.g. JEE Main" });
+    const qstyle = h("select", { id: "q-style" }, [["", "Normal"], ["paragraph", "Paragraph"], ["matrix", "Match the column"]].map(([k, v]) => h("option", { value: k, selected: (qd.qstyle || "") === k }, v)));
     const bank = h("select", { id: "q-bank" }, BANK_TABS.map(([k, t]) => h("option", { value: k, selected: (qd.bank || "portal") === k }, t)));
     const text = h("textarea", { id: "q-text", rows: 6 }, qd.text);
     let image = qd.image || "";
@@ -790,14 +801,14 @@
     show(view, h("div", { class: "head" }, h("div", {}, h("a", { href: "#/bank" }, "‹ Question bank"), h("h1", {}, isNew ? "New question" : `Question ${id}`))), preview,
       h("form", { class: "card", onsubmit: async e => {
         e.preventDefault(); err.textContent = "";
-        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value, fmt: qd.fmt || "", source: qd.source || "", bank: bank.value, exam: exam.value };
+        const body = { subject: subject.value, chapter: chapter.value, topic: topic.value, qtype: qtype.value, difficulty: diff.value, text: text.value, image, options: opts.map(o => o.value), answer: answer.value, solution: solution.value, fmt: qd.fmt || "", source: qd.source || "", bank: bank.value, qstyle: qstyle.value, exam: exam.value };
         try { if (isNew) { const r = await POST("/api/questions", body); toast("Question saved"); location.hash = `#/bank/${r.id}`; } else { await PUT(`/api/questions/${id}`, body); toast("Saved"); } }
         catch (x) { err.textContent = x.message; }
       } },
         h("datalist", { id: "subj-list" }, ["Physics", "Chemistry", "Mathematics", "Botany", "Zoology"].map(s => h("option", { value: s }))),
         h("div", { class: "row" }, field("Subject", subject), field("Chapter", chapter), field("Topic", topic, "Optional")),
         h("datalist", { id: "exam-list" }, ["JEE Main", "JEE Advanced", "NEET", "EAPCET", "Board"].map(s => h("option", { value: s }))),
-        h("div", { class: "row" }, field("Question type", qtype), field("Level", diff), field("Exam", exam, "Optional"), field("Bank", bank)),
+        h("div", { class: "row" }, field("Question type", qtype), field("Level", diff), field("Exam", exam, "Optional"), field("Bank", bank), field("Style", qstyle, "Paragraph or match the column (JEE Advanced)")),
         field("Question", text, "Type the question, or add an image of it below (or both)."),
         h("div", { class: "row" }, field("Question image", imgIn, "PNG or JPG, up to 2 MB"), rmImg), imgPrev,
         optBox, h("label", { class: "f" }, "Correct answer", ansHint, answer), field("Solution", solution, "Optional. Shown to students after results are published."), err,

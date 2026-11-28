@@ -161,6 +161,7 @@
     account: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.4-6 8-6s7 2 8 6"/>',
     results: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     mistakes: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+    practice: '<path d="M14 4l6 6L9 21H3v-6z"/><path d="M12 6l6 6"/>',
   };
   const navIcon = k => h("span", { class: "nav-ic", "aria-hidden": "true", html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>` });
   const initials = s => String(s || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
@@ -189,7 +190,7 @@
     document.body.classList.toggle("role-admin", !student);
     setMenu(false);
     loadBrand();
-    const items = student ? [["#/my", "My results", "results"], ["#/mistakes", "My mistakes", "mistakes"], ["#/account", "Account", "account"]]
+    const items = student ? [["#/my", "My results", "results"], ["#/mistakes", "My mistakes", "mistakes"], ["#/practice", "Practice", "practice"], ["#/account", "Account", "account"]]
       : [["#/", "Home", "home"], ["#/tests", "Tests", "tests"], ["#/dashboard", "Analysis", "analysis"], ["#/students", "Students", "students"],
         ...(me.role === "central" ? [["#/bank", "Question bank", "bank"], ["#/structure", "Zones & batches", "structure"], ["#/admins", "Admins", "admins"]] : [["#/structure", "Campuses & batches", "structure"]]),
         ["#/account", "Account", "account"]];
@@ -2204,6 +2205,115 @@
   }
   route(/^\/my\/(\d+)$/, async (view, id) => reportView(view, await GET(`/api/my/tests/${id}`), h("a", { href: "#/my" }, "‹ My results")), ["student"]);
 
+  // ================================================================ practice: chapter strength report and short practice tests from the bank
+  const capS = x => (x ? x[0].toUpperCase() + x.slice(1).toLowerCase() : "");
+  async function startPractice(chapters, opts = {}) {
+    try {
+      const r = await POST("/api/my/practice", { chapters, count: opts.count || 10, level: opts.level || "", retry: opts.retry !== false });
+      location.hash = `#/practice/${r.id}`;
+    } catch (e) { toast(e.message); }
+  }
+  route(/^\/practice$/, async view => {
+    const [rep, avail, past] = await Promise.all([GET("/api/my/chapters"), GET("/api/my/practice/chapters"), GET("/api/my/practice")]);
+    const picked = new Map(rep.weak.map(w => [`${w.subject}|${w.chapter}`, { subject: w.subject, chapter: w.chapter }]));
+    const has = new Set(avail.map(a => `${a.subject}|${a.chapter}`));
+    const chipsBox = h("div", { class: "qchips" }), startBtn = h("button", { class: "btn gold", type: "button" }, "Start practice");
+    const count = h("select", { id: "pr-count", "aria-label": "Number of questions" }, [10, 15, 20, 25].map(n => h("option", { value: n }, `${n} questions`)));
+    const level = h("select", { id: "pr-level", "aria-label": "Level" }, h("option", { value: "" }, "Any level"), QLEVELS.map(l => h("option", { value: l }, l)));
+    const retry = h("input", { type: "checkbox", id: "pr-retry", checked: true });
+    const subs = [...new Set(avail.map(a => a.subject))];
+    const addSub = h("select", { id: "pr-sub", "aria-label": "Subject" }, subs.map(s => h("option", { value: s }, capS(s))));
+    const addCh = h("select", { id: "pr-ch", "aria-label": "Chapter to add" });
+    const fillCh = () => addCh.replaceChildren(h("option", { value: "" }, "Add a chapter…"), ...avail.filter(a => a.subject === addSub.value).map(a => h("option", { value: a.chapter }, `${a.chapter} (${a.n})`)));
+    addSub.onchange = fillCh; fillCh();
+    addCh.onchange = () => { if (addCh.value) { picked.set(`${addSub.value}|${addCh.value}`, { subject: addSub.value, chapter: addCh.value }); addCh.value = ""; drawPicked(); } };
+    function drawPicked() {
+      show(chipsBox, ...(picked.size ? [...picked].map(([k, c]) => h("span", { class: "chip pr-chip" }, c.chapter, h("span", { class: "muted small" }, ` · ${capS(c.subject)}`),
+        h("button", { type: "button", "aria-label": `Remove ${c.chapter}`, onclick: () => { picked.delete(k); drawPicked(); } }, "✕"))) : [h("span", { class: "small muted" }, "No chapters chosen yet. Add one below.")]));
+      startBtn.disabled = !picked.size;
+    }
+    startBtn.onclick = () => startPractice([...picked.values()].filter(c => has.has(`${c.subject}|${c.chapter}`)).length ? [...picked.values()] : [], { count: +count.value, level: level.value, retry: retry.checked });
+    drawPicked();
+    const bar = pc => h("div", { class: "meter pr-meter" }, h("i", { style: `width:${Math.max(2, pc)}%;background:${pc < 40 ? "var(--bad)" : pc < 60 ? "var(--warn)" : "var(--ok)"}` }));
+    const weakCard = h("div", { class: "card" }, h("div", { class: "head" }, h("div", {}, h("h2", {}, "Your weakest chapters"),
+        h("p", { class: "small muted", style: "margin:2px 0 0" }, rep.weak.length ? "Revise in this order: the chapters where you lost the most marks come first." : "")),
+        rep.weak.length ? h("span", { class: "pill" }, `From ${rep.tests} test${rep.tests === 1 ? "" : "s"}`) : null),
+      rep.weak.length ? h("ol", { class: "pr-weak" }, rep.weak.map(w => h("li", {},
+        h("div", { class: "pr-weak-t" }, h("b", {}, w.chapter), h("span", { class: "small muted" }, `${capS(w.subject)} · ${w.right} of ${w.n} right · ${w.lost} marks lost`)),
+        bar(w.accuracy), h("span", { class: "pr-acc" }, `${w.accuracy}%`),
+        has.has(`${w.subject}|${w.chapter}`) ? h("button", { class: "btn small ghost", type: "button", onclick: () => startPractice([{ subject: w.subject, chapter: w.chapter }]) }, "Practise") : h("span", { class: "small muted" }, "No bank questions"))))
+        : h("p", { class: "empty" }, rep.chapters.length ? "No weak chapters right now: you're above 60% in every chapter with 2 or more questions. Pick any chapter below to keep practising." : "Your chapter report appears after your first results are published (for tests made from the question bank)."));
+    const allCard = rep.chapters.length ? h("details", { class: "card" }, h("summary", {}, h("b", {}, "All my chapters"), h("span", { class: "small muted" }, ` · ${rep.chapters.length}, weakest first`)),
+      h("div", { class: "tablebox", style: "margin-top:12px" }, h("table", {}, h("thead", {}, h("tr", {}, ["Chapter", "Subject", "Questions", "Right", "Wrong", "Skipped", "Accuracy", "Marks lost", ""].map((x, i) => h("th", { class: i >= 2 && i <= 7 ? "num" : "" }, x)))),
+        h("tbody", {}, rep.chapters.map(c => h("tr", {}, h("td", {}, h("b", {}, c.chapter)), h("td", {}, capS(c.subject)), h("td", { class: "num" }, c.n), h("td", { class: "num" }, c.right), h("td", { class: "num" }, c.wrong), h("td", { class: "num" }, c.blank + c.partial),
+          h("td", { class: "num" }, h("div", { class: "pr-acc-cell" }, bar(c.accuracy), h("span", {}, `${c.accuracy}%`))), h("td", { class: "num" }, c.lost),
+          h("td", {}, has.has(`${c.subject}|${c.chapter}`) ? h("button", { class: "link small", type: "button", onclick: () => startPractice([{ subject: c.subject, chapter: c.chapter }]) }, "Practise") : null))))))) : null;
+    const pastCard = h("div", { class: "card" }, h("h2", {}, "My practice tests"),
+      past.length ? h("div", { class: "pr-past" }, past.map(p => h("a", { class: "pr-row", href: `#/practice/${p.id}` },
+        h("div", { class: "pr-row-t" }, h("b", {}, p.title), h("span", { class: "small muted" }, `${new Date(p.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · ${p.count} questions`)),
+        p.submitted_at ? h("span", { class: "pr-score" }, h("b", {}, `${p.score} / ${p.max}`), h("span", { class: "small muted" }, `${p.n_right} right · ${p.n_wrong} wrong`)) : h("span", { class: "pill warn" }, "Continue"),
+        h("span", { class: "rr-go", "aria-hidden": "true" }, "›"))))
+        : h("p", { class: "empty" }, "Your practice tests will be listed here."));
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "Practice"), h("p", { class: "sub" }, "Short tests from the question bank on the chapters you choose, marked as soon as you submit."))),
+      weakCard,
+      h("div", { class: "card" }, h("h2", {}, "Make a practice test"), chipsBox,
+        h("div", { class: "row filters" }, addSub, addCh),
+        h("div", { class: "row filters" }, count, level, h("label", { class: "imp-check" }, retry, h("span", {}, "Include questions I got wrong in tests"))),
+        h("div", { class: "row" }, startBtn)),
+      allCard, pastCard);
+  }, ["student"]);
+
+  route(/^\/practice\/(\d+)$/, async (view, id) => {
+    const P = await GET(`/api/my/practice/${id}`);
+    const back = h("a", { href: "#/practice" }, "‹ Practice");
+    const Q = P.questions, A = { ...P.answers };
+    const body = q => (q.fmt === "html" ? richNode(q.text) : h("div", { style: "white-space:pre-wrap" }, q.text));
+    const RES = { correct: ["Right", "ok"], wrong: ["Wrong", "bad"], blank: ["Skipped", ""] };
+    if (P.submitted_at) {
+      const acc = P.n_right + P.n_wrong ? Math.round((P.n_right / (P.n_right + P.n_wrong)) * 100) : 0;
+      const chapters = [...new Map(Q.map(q => [`${q.subject}|${q.chapter}`, { subject: q.subject, chapter: q.chapter }])).values()];
+      show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, P.title), h("p", { class: "sub" }, `Practice · ${Q.length} questions · submitted ${new Date(P.submitted_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`)),
+          h("button", { class: "btn gold", type: "button", onclick: () => startPractice(chapters, { count: Q.length }) }, "Practise again")),
+        h("div", { class: "stats" }, h("div", { class: "stat gold" }, h("b", {}, `${P.score} / ${P.max}`), h("span", {}, "Score (+4 right, −1 wrong single-choice)")),
+          h("div", { class: "stat ok" }, h("b", {}, P.n_right), h("span", {}, "Right")), h("div", { class: "stat warn" }, h("b", {}, P.n_wrong), h("span", {}, "Wrong")),
+          h("div", { class: "stat" }, h("b", {}, Q.length - P.n_right - P.n_wrong), h("span", {}, "Skipped")), h("div", { class: "stat" }, h("b", {}, `${acc}%`), h("span", {}, "Accuracy"))),
+        ...Q.map((q, i) => { const [label, tone] = RES[q.result] || ["", ""];
+          return h("div", { class: "card pr-review " + tone }, h("div", { class: "qv-head" }, h("b", {}, `Q${i + 1}`), h("span", { class: "pill " + tone }, label),
+              h("span", { class: "small muted" }, [q.chapter, q.topic].filter(Boolean).join(" · ")), q.level ? h("span", { class: "pill lv" + (QLEVELS.indexOf(q.level) + 1) }, q.level) : null),
+            body(q), h("div", { class: "ra-facts" }, h("div", {}, h("span", {}, "Your answer"), h("b", { class: "mono" }, A[q.id] || "—")), h("div", {}, h("span", {}, "Correct answer"), h("b", { class: "mono" }, q.answer || "—"))),
+            q.solution ? h("details", { open: q.result !== "correct" }, h("summary", {}, "Solution"), q.fmt === "html" ? richNode(q.solution) : h("div", { style: "white-space:pre-wrap" }, q.solution)) : null); }));
+      return;
+    }
+    let cur = Math.max(0, Q.findIndex(q => !A[q.id])), saveT = 0;
+    if (cur < 0) cur = 0;
+    const save = () => { clearTimeout(saveT); saveT = setTimeout(() => PUT(`/api/my/practice/${id}`, { answers: A }).catch(() => {}), 800); };
+    const pal = h("div", { class: "pr-pal" }), card = h("div", { class: "card pr-q" }), count = h("span", { class: "small muted" });
+    function draw() {
+      const q = Q[cur];
+      count.textContent = `${Object.keys(A).filter(k => A[k]).length} of ${Q.length} answered`;
+      show(pal, ...Q.map((x, i) => h("button", { type: "button", class: "pr-dot" + (A[x.id] ? " done" : "") + (i === cur ? " cur" : ""), "aria-label": `Question ${i + 1}${A[x.id] ? ", answered" : ""}`, onclick: () => { cur = i; draw(); } }, i + 1)));
+      const answer = q.qtype === "single"
+        ? h("div", { class: "pr-opts", role: "radiogroup", "aria-label": "Your answer" }, ["A", "B", "C", "D"].map(o => h("button", { type: "button", role: "radio", "aria-checked": String(A[q.id] === o), class: "pr-opt" + (A[q.id] === o ? " on" : ""),
+            onclick: () => { A[q.id] = A[q.id] === o ? "" : o; save(); draw(); } }, `(${o})`)))
+        : h("label", { class: "f", style: "max-width:220px" }, "Your answer (number)", h("input", { id: "pr-num", inputmode: "decimal", value: A[q.id] || "", autocomplete: "off",
+            oninput: e => { A[q.id] = e.target.value.replace(/[^0-9.\-]/g, "").slice(0, 12); save(); count.textContent = `${Object.keys(A).filter(k => A[k]).length} of ${Q.length} answered`; } }));
+      show(card, h("div", { class: "qv-head" }, h("b", {}, `Question ${cur + 1} of ${Q.length}`), h("span", { class: "small muted" }, [capS(q.subject), q.chapter].filter(Boolean).join(" · ")),
+          q.level ? h("span", { class: "pill lv" + (QLEVELS.indexOf(q.level) + 1) }, q.level) : null),
+        body(q), q.image ? h("img", { src: q.image, alt: "", style: "max-width:100%" }) : null, answer,
+        h("div", { class: "qv-foot" }, h("button", { class: "btn ghost small", type: "button", disabled: cur === 0, onclick: () => { cur--; draw(); } }, "‹ Previous"),
+          h("button", { class: "btn ghost small", type: "button", disabled: cur === Q.length - 1, onclick: () => { cur++; draw(); } }, "Next ›")));
+    }
+    const submit = h("button", { class: "btn gold", type: "button", onclick: () => {
+      const left = Q.filter(q => !A[q.id]).length;
+      modal((b, close) => b.append(h("h2", {}, "Submit this practice?"), h("p", {}, left ? `${left} question${left === 1 ? " is" : "s are"} not answered yet.` : "All questions are answered."),
+        h("div", { class: "row" }, h("button", { class: "btn gold", type: "button", onclick: async () => { close(); clearTimeout(saveT);
+            try { await POST(`/api/my/practice/${id}/submit`, { answers: A }); render(); } catch (e) { toast(e.message); } } }, "Submit"),
+          h("button", { class: "btn ghost", type: "button", onclick: close }, "Keep going"))));
+    } }, "Submit");
+    show(view, h("div", { class: "head" }, h("div", {}, back, h("h1", {}, P.title), h("p", { class: "sub" }, count)), submit), pal, card);
+    draw();
+  }, ["student"]);
+
   // ================================================================ my mistakes: every wrong / skipped question till date, by subject → chapter → topic
   route(/^\/mistakes$/, async view => {
     const r = await GET("/api/my/mistakes");
@@ -2320,7 +2430,8 @@
     fCh.onchange = () => { syncLists(fCh.value, ""); draw(); };
     fTp.onchange = draw;
     syncLists(pref.ch || "", pref.tp || "");
-    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "My mistakes"), h("p", { class: "sub" }, "Every question you got wrong or skipped, in all your tests so far. Tap one to try it again and see the solution."))),
+    show(view, h("div", { class: "head" }, h("div", {}, h("h1", {}, "My mistakes"), h("p", { class: "sub" }, "Every question you got wrong or skipped, in all your tests so far. Tap one to try it again and see the solution.")),
+        h("a", { class: "btn gold", href: "#/practice" }, "Practise weak chapters")),
       tiles,
       h("div", { class: "card" }, h("div", { class: "row filters" }, fType, fSub, fCh, fTp, fTest, fSort,
         h("label", { class: "imp-check" }, fHide, h("span", {}, "Hide the answer until I tap Show")))),

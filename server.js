@@ -1186,6 +1186,115 @@ app.get("/api/my/tests/:id", auth, wrap(async req => {
   return studentReport(t, req.user.id);
 }));
 
+// ------------------------------------------------------------------ chapter strength and practice (students)
+// every question the student met in a published test that is linked to the bank, with its chapter
+async function myQuestions(studentId) {
+  const tests = await qa(`SELECT t.* FROM tests t JOIN results r ON r.test_id=t.id WHERE r.student_id=? AND t.published=1 ORDER BY t.test_date, t.id`, studentId);
+  const out = [];
+  for (const t of tests) {
+    const { scored } = await scoredCached(t);
+    const me = scored.find(x => x.student_id === studentId); if (!me) continue;
+    const linked = new Map((await qa(`SELECT tq.qno, q.id, q.subject, q.chapter, q.topic FROM test_questions tq JOIN questions q ON q.id=tq.question_id WHERE tq.test_id=?`, t.id)).map(r => [r.qno, r]));
+    const fullOf = Object.fromEntries(OMR.questionIndex(layoutOf(t)).map(x => [x.qno, x.sec.marks.correct]));
+    for (const d of me.detail) {
+      const q = linked.get(d.q);
+      if (!q || !q.chapter || ["dropped", "nokey", "badkey"].includes(d.result)) continue;
+      out.push({ qid: q.id, subject: q.subject, chapter: q.chapter, topic: q.topic || "", result: d.result, marks: d.marks || 0, full: fullOf[d.q] || 0, test_id: t.id, date: t.test_date });
+    }
+  }
+  return { tests: tests.length, items: out };
+}
+// chapter by chapter: how often right, wrong or skipped, and marks lost; weakest first
+app.get("/api/my/chapters", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  const { tests, items } = await myQuestions(req.user.id);
+  const m = new Map();
+  for (const x of items) {
+    const k = `${x.subject}|${x.chapter}`;
+    if (!m.has(k)) m.set(k, { subject: x.subject, chapter: x.chapter, n: 0, right: 0, wrong: 0, blank: 0, partial: 0, marks: 0, full: 0, last: "" });
+    const c = m.get(k); c.n++; c.marks += x.marks; c.full += x.full; if (x.date > c.last) c.last = x.date;
+    if (x.result === "correct" || x.result === "bonus") c.right++; else if (x.result === "wrong") c.wrong++; else if (x.result === "partial") c.partial++; else c.blank++;
+  }
+  const rows = [...m.values()].map(c => ({ ...c, accuracy: c.n ? Math.round((c.right / c.n) * 100) : 0, lost: Math.max(0, c.full - c.marks) }));
+  // weak = at least 2 questions seen and below 60% right; most marks lost first
+  const weak = rows.filter(r => r.n >= 2 && r.accuracy < 60).sort((a, b) => b.lost - a.lost || a.accuracy - b.accuracy);
+  return { tests, chapters: rows.sort((a, b) => a.accuracy - b.accuracy || b.n - a.n), weak: weak.slice(0, 5) };
+}));
+// chapters a student can practise: everything in the bank that has answers to mark against
+app.get("/api/my/practice/chapters", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  return qa(`SELECT subject, chapter, COUNT(*) AS n FROM questions WHERE COALESCE(hidden,0)=0 AND chapter != '' AND answer != '' AND qtype IN ('single','integer','decimal')
+             GROUP BY subject, chapter ORDER BY subject, chapter`);
+}));
+const practiceMark = (q, a) => {
+  const v = String(a == null ? "" : a).trim().toUpperCase();
+  if (!v) return "blank";
+  if (q.qtype === "single") return v === String(q.answer).trim().toUpperCase()[0] ? "correct" : "wrong";
+  const x = Number(v), y = Number(String(q.answer).trim());
+  return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) <= (q.qtype === "decimal" ? 0.01 : 1e-9) ? "correct" : "wrong";
+};
+app.post("/api/my/practice", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  const b = req.body || {}, count = [10, 15, 20, 25].includes(Number(b.count)) ? Number(b.count) : 10;
+  const chosen = (Array.isArray(b.chapters) ? b.chapters : []).slice(0, 12).map(c => ({ subject: str(c.subject, 40), chapter: str(c.chapter, 120) })).filter(c => c.subject && c.chapter);
+  if (!chosen.length) bad("Choose at least one chapter.");
+  const level = QLEVELS.includes(b.level) ? b.level : "";
+  // questions the student already got right in tests are skipped; wrong ones can come back if asked
+  const { items } = await myQuestions(req.user.id);
+  const rightIds = new Set(items.filter(x => x.result === "correct" || x.result === "bonus").map(x => x.qid));
+  const wrongIds = new Set(items.filter(x => !(x.result === "correct" || x.result === "bonus")).map(x => x.qid));
+  const recent = new Set((await qa("SELECT qids FROM practice WHERE student_id=? ORDER BY id DESC LIMIT 5", req.user.id)).flatMap(r => JSON.parse(r.qids)));
+  const per = Math.ceil(count / chosen.length), pick = [];
+  for (const c of chosen) {
+    const pool = await qa(`SELECT id FROM questions WHERE COALESCE(hidden,0)=0 AND answer != '' AND qtype IN ('single','integer','decimal') AND subject=? AND chapter=? ${level ? "AND difficulty=?" : ""}`,
+      ...[c.subject, c.chapter, ...(level ? [level] : [])]);
+    const ids = pool.map(r => r.id).filter(id => !rightIds.has(id));
+    const again = b.retry ? ids.filter(id => wrongIds.has(id)).sort(() => Math.random() - 0.5).slice(0, Math.ceil(per * 0.3)) : [];
+    const fresh = ids.filter(id => !wrongIds.has(id) && !recent.has(id)).sort(() => Math.random() - 0.5);
+    const stale = ids.filter(id => !wrongIds.has(id) && recent.has(id)).sort(() => Math.random() - 0.5);
+    pick.push(...[...again, ...fresh, ...stale].slice(0, per));
+  }
+  const qids = [...new Set(pick)].sort(() => Math.random() - 0.5).slice(0, count);
+  if (!qids.length) bad("No questions are available for these chapters yet.");
+  const title = chosen.length === 1 ? chosen[0].chapter : `${chosen[0].chapter} + ${chosen.length - 1} more`;
+  return { id: await insert("INSERT INTO practice (student_id, created_at, title, qids) VALUES (?,?,?,?)", req.user.id, Date.now(), title.slice(0, 160), JSON.stringify(qids)) };
+}));
+app.get("/api/my/practice", auth, wrap(async req => {
+  if (req.user.role !== "student") forbid();
+  return (await qa("SELECT id, created_at, title, qids, submitted_at, n_right, n_wrong, score, max FROM practice WHERE student_id=? ORDER BY id DESC LIMIT 50", req.user.id))
+    .map(({ qids, ...r }) => ({ ...r, count: JSON.parse(qids).length }));
+}));
+async function myPractice(req) {
+  if (req.user.role !== "student") forbid();
+  const p = await q1("SELECT * FROM practice WHERE id=? AND student_id=?", Number(req.params.id), req.user.id);
+  if (!p) throw new HttpError(404, "Practice not found.");
+  const ids = JSON.parse(p.qids), rows = await qa(`SELECT id, subject, chapter, topic, qtype, difficulty, text, image, options, answer, solution, fmt FROM questions WHERE ${inList("id", ids)}`);
+  const byId = new Map(rows.map(r => [r.id, r]));
+  return { p, qs: ids.map(id => byId.get(id)).filter(Boolean) };
+}
+app.get("/api/my/practice/:id", auth, wrap(async req => {
+  const { p, qs } = await myPractice(req), done = !!p.submitted_at, answers = JSON.parse(p.answers || "{}");
+  return { id: p.id, title: p.title, created_at: p.created_at, submitted_at: p.submitted_at, score: p.score, max: p.max, n_right: p.n_right, n_wrong: p.n_wrong, answers,
+    questions: qs.map(q => ({ id: q.id, subject: q.subject, chapter: q.chapter, topic: q.topic, qtype: q.qtype, level: q.difficulty, text: q.text, image: q.image, options: JSON.parse(q.options || "[]"), fmt: q.fmt,
+      ...(done ? { answer: q.answer, solution: q.solution, result: practiceMark(q, answers[q.id]) } : {}) })) };
+}));
+const cleanPracticeAnswers = (raw, qs) => Object.fromEntries(qs.map(q => [q.id, str((raw || {})[q.id], 12).toUpperCase()]).filter(([, v]) => v));
+app.put("/api/my/practice/:id", auth, wrap(async req => {
+  const { p, qs } = await myPractice(req);
+  if (p.submitted_at) bad("This practice is already submitted.");
+  await run("UPDATE practice SET answers=? WHERE id=?", JSON.stringify(cleanPracticeAnswers(req.body.answers, qs)), p.id);
+  return { ok: true };
+}));
+app.post("/api/my/practice/:id/submit", auth, wrap(async req => {
+  const { p, qs } = await myPractice(req);
+  if (p.submitted_at) return { ok: true };
+  const answers = cleanPracticeAnswers(req.body.answers, qs);
+  let right = 0, wrong = 0, score = 0;
+  for (const q of qs) { const r = practiceMark(q, answers[q.id]); if (r === "correct") { right++; score += 4; } else if (r === "wrong") { wrong++; score += q.qtype === "single" ? -1 : 0; } }
+  await run("UPDATE practice SET answers=?, submitted_at=?, n_right=?, n_wrong=?, score=?, max=? WHERE id=?", JSON.stringify(answers), Date.now(), right, wrong, score, qs.length * 4, p.id);
+  return { ok: true };
+}));
+
 // every question a student got wrong, partly right or left blank, across all published tests
 app.get("/api/my/mistakes", auth, wrap(async req => {
   if (req.user.role !== "student") forbid();

@@ -768,3 +768,35 @@ body.menu-open .scrim { z-index: 55 }
 .st-log summary { cursor: pointer } .st-log ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px }
 .st-log li { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 10px; font-size: 14px; border-top: 1px solid var(--line); padding-top: 8px }
 @media (max-width: 600px) { .st-log li { grid-template-columns: 1fr } }
+
+/* ---- practice */
+.pr-weak { list-style: none; counter-reset: w; margin: 0; padding: 0; display: grid; gap: 0 }
+.pr-weak li { counter-increment: w; display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(80px, 180px) 44px auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line) }
+.pr-weak li:first-child { border-top: 0 }
+.pr-weak li::before { content: counter(w); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); font-weight: 800; color: var(--navy) }
+.pr-weak-t { display: grid; min-width: 0 }
+.pr-acc { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums }
+.pr-meter { height: 8px }
+.pr-acc-cell { display: grid; grid-template-columns: 70px auto; gap: 8px; align-items: center; justify-content: end }
+@media (max-width: 640px) { .pr-weak li { grid-template-columns: 30px minmax(0, 1fr) 44px } .pr-weak li .pr-meter { grid-column: 2 / 4 } .pr-weak li > :last-child { grid-column: 2 / 4; justify-self: start } }
+.pr-chip { display: inline-flex; align-items: center; gap: 6px } .pr-chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 2px }
+.pr-past { display: grid; gap: 8px }
+.pr-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; text-decoration: none; color: var(--fg) }
+.pr-row:hover { background: var(--sunk) }
+.pr-row-t, .pr-score { display: grid; min-width: 0 } .pr-score { text-align: right }
+.pr-pal { display: flex; flex-wrap: wrap; gap: 6px }
+.pr-dot { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: 700 13px var(--font); cursor: pointer }
+.pr-dot.done { background: var(--ok); border-color: var(--ok); color: var(--surface) }
+.pr-dot.cur { box-shadow: 0 0 0 3px color-mix(in srgb, var(--navy) 35%, transparent) }
+.pr-q { display: grid; gap: 14px }
+.pr-opts { display: flex; flex-wrap: wrap; gap: 10px }
+.pr-opt { min-width: 64px; padding: 10px 16px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); color: var(--fg); font: 700 15px var(--font); cursor: pointer }
+.pr-opt:hover { border-color: var(--navy) }
+.pr-opt.on { background: var(--navy); border-color: var(--navy); color: var(--surface) }
+.pr-review { display: grid; gap: 12px; border-left: 4px solid var(--line) }
+.pr-review.ok { border-left-color: var(--ok) } .pr-review.bad { border-left-color: var(--bad) }
+@media (max-width: 640px) {
+  .pr-weak li { grid-template-columns: 30px minmax(0, 1fr) 46px; row-gap: 8px }
+  .pr-weak li::before { grid-row: 1 } .pr-weak-t { grid-column: 2; grid-row: 1 } .pr-weak li .pr-acc { grid-column: 3; grid-row: 1 }
+  .pr-weak li .pr-meter { grid-column: 2 / 4; grid-row: 2 } .pr-weak li > :last-child { grid-column: 2 / 4; grid-row: 3; justify-self: start }
+}
